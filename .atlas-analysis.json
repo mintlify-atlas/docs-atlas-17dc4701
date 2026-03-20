@@ -1,0 +1,96 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "CyberScripts",
+  "projectDescription": "A collection of shell scripts for blue team automation in cybersecurity competitions, covering hardening, firewall setup, baselining, file integrity monitoring, and C2 detection.",
+  "theme": "aspen",
+  "primaryColor": "#1E90FF",
+  "lightColor": "#60B8FF",
+  "darkColor": "#0A5FA8",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/overview",
+              "deployment/minzero-deploy",
+              "deployment/activate"
+            ]
+          },
+          {
+            "group": "Scripts Reference",
+            "pages": [
+              "scripts/watchdawg",
+              "scripts/c2scanner",
+              "scripts/angryc2scanner",
+              "scripts/backup",
+              "scripts/auditkey-notifier",
+              "scripts/busybox-deploy"
+            ]
+          },
+          {
+            "group": "Baselining",
+            "pages": [
+              "baselining/overview",
+              "baselining/standard",
+              "baselining/specific",
+              "baselining/data-collection"
+            ]
+          },
+          {
+            "group": "Hardening",
+            "pages": [
+              "hardening/harden",
+              "hardening/autofirewall",
+              "hardening/sshd-config"
+            ]
+          },
+          {
+            "group": "Utility Functions",
+            "pages": [
+              "funcs/overview",
+              "funcs/detect-os",
+              "funcs/discord-notif",
+              "funcs/password-hasher",
+              "funcs/shell-colors"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Parallel multi-host deployment via deploy.sh using sshpass",
+    "Automated iptables firewall lockdown based on port-sources config",
+    "User hardening: locks all shells to /bin/false, adds bluey admin user",
+    "Watchdawg file integrity monitor with backup and change detection",
+    "C2 connection scanner with optional process kill mode (angryc2scanner)",
+    "Competition-state backup covering filesystem, services, packages, and ports",
+    "Interactive baselining with clean vs. dirty system diff comparison",
+    "Auditd rules deployment with Discord webhook alerting"
+  ],
+  "publicApiSurface": [
+    "deploy.sh <username> <password>",
+    "activate.sh",
+    "watchdawg.sh <backup-dir> <sources-file>",
+    "c2scanner.sh",
+    "angryc2scanner.sh",
+    "backup.sh",
+    "baseline/standard.sh",
+    "baseline/specific.sh <system-name>",
+    "baseline/data-collection.sh",
+    "auditkey-notifier.sh",
+    "minzero/harden.sh <password-hash>",
+    "minzero/autofirewall.sh",
+    "funcs/detectOS.sh",
+    "funcs/discordNotif.sh",
+    "funcs/passwordHasher.sh",
+    "funcs/shellColors.sh"
+  ]
+}
