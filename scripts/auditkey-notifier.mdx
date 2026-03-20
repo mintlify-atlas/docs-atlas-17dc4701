@@ -86,14 +86,33 @@ The embed title is the audit key that triggered the alert. Fields show the comma
 
 ## Auditd rules
 
-The script watches for events tagged with the keys defined in `ALERT_KEY1` and `ALERT_KEY2`. Your auditd rules must use matching `-k` values. `activate.sh` copies `auditd-rules` to `/etc/audit/rules.d/standard.rules`. Example rules:
+The script watches for events tagged with the keys defined in `ALERT_KEY1` and `ALERT_KEY2`. The `auditd-rules` file deployed by `activate.sh` uses both keys extensively. Rules using the `recon` key watch for reconnaissance tools:
 
 ```
--a always,exit -F arch=b64 -S execve -k recon
--w /etc/passwd -p wa -k susp_activity
+-w /usr/bin/whoami -p x -k recon
+-w /usr/bin/id     -p x -k recon
+-w /bin/hostname   -p x -k recon
+-w /bin/uname      -p x -k recon
+-w /etc/issue      -p r -k recon
+-w /etc/hostname   -p r -k recon
 ```
 
-After changing rules, reload with `augenrules --load` or restart auditd.
+Rules using the `susp_activity` key watch for tools commonly used in post-exploitation:
+
+```
+-w /usr/bin/wget      -p x -k susp_activity
+-w /usr/bin/curl      -p x -k susp_activity
+-w /usr/bin/base64    -p x -k susp_activity
+-w /bin/nc            -p x -k susp_activity
+-w /bin/netcat        -p x -k susp_activity
+-w /usr/bin/ncat      -p x -k susp_activity
+-w /usr/bin/nmap      -p x -k susp_activity
+-w /usr/bin/socat     -p x -k susp_activity
+-w /usr/bin/ssh       -p x -k susp_activity
+-w /usr/bin/scp       -p x -k susp_activity
+```
+
+Whenever any of these executables is run, auditd fires an event with the corresponding key, the notifier picks it up from the socket, and a Discord alert is sent. After changing rules, reload with `augenrules --load` or restart auditd.
 
 ## Known bug
 

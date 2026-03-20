@@ -19,7 +19,7 @@ watchdawg.sh <backup-dir> <sources-file>
 | `sources-file` | Text file listing files and directories to watch, one path per line |
 
 <Info>
-`activate.sh` deploys `watchdawg.sh` to `/etc/kernel/watchdawg` and launches it with `/etc/kerner/init-state` as the backup dir and `/etc/kernel/sources` as the sources file.
+`activate.sh` deploys `watchdawg.sh` to `/etc/kernel/watchdawg` and launches it with `/etc/kernel/sources` as the sources file. See the deployment path section below for details and a known typo in the backup directory argument.
 </Info>
 
 ## How it works
@@ -81,20 +81,27 @@ Each entry is separated by `============` and includes the full file path, times
 
 ## The sources file
 
-The sources file is a plain text file with one path per line. Paths can be files or directories:
+The sources file is a plain text file with one path per line. Paths can be files or directories. The `watchdawg-sources` file shipped with CyberScripts watches the most critical system files:
 
 ```
+/etc/sysconfig/iptables
+/etc/iptables
 /etc/passwd
 /etc/shadow
-/etc/ssh/sshd_config
-/etc/cron.d
-/var/www/html
+/etc/group
+/etc/gshadow
+/etc/pam.d
+/etc/ssh
+/etc/sudoers
+/etc/rc.local
 ```
 
-When a directory is listed, `watchdawg.sh` expands it to individual files on startup. New files added to a watched directory after startup are not automatically picked up.
+It also includes an extensive list of individual PAM configuration files and SSH config files (host keys, `sshd_config`, `ssh_config`, etc.) so that any modification to authentication or key material is detected.
+
+When a directory is listed (like `/etc/pam.d` or `/etc/ssh`), `watchdawg.sh` expands it to individual files on startup. New files added to a watched directory after startup are not automatically picked up.
 
 <Note>
-The sources file is modified at runtime — directory entries have their children appended to the file. Keep a separate clean copy if you need the original list.
+The sources file is modified at runtime — directory entries have their children appended to the file. The shipped `watchdawg-sources` already pre-lists many of those individual files, so some entries will be duplicated after expansion. This is harmless but means the file grows larger after first run.
 </Note>
 
 ## Deployment path
@@ -108,6 +115,10 @@ mv /tmp/watchdawg.sh /etc/kernel/watchdawg
 mv /tmp/watchdawg-sources /etc/kernel/sources
 nohup /etc/kernel/watchdawg /etc/kerner/init-state /etc/kernel/sources > /etc/kernel/out 2>&1 &
 ```
+
+<Warning>
+There is a typo in `activate.sh`: the backup directory is passed as `/etc/kerner/init-state` (missing `l`) instead of `/etc/kernel/init-state`. Watchdawg will still start and function normally, but its backup directory will be at the misspelled path.
+</Warning>
 
 Output is redirected to `/etc/kernel/out` and the process runs detached via `nohup`.
 

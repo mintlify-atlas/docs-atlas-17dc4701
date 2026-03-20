@@ -3,7 +3,7 @@ title: 'funcs/discordNotif.sh'
 description: 'Sends a Discord embed notification via webhook'
 ---
 
-`discordNotif.sh` sends a Discord embed notification containing process details to a configured webhook URL. It is called by `auditkey-notifier.sh` when a monitored audit key triggers an event.
+`discordNotif.sh` sends a Discord embed notification containing process details to a configured webhook URL. It shares the same notification pattern used by `auditkey-notifier.sh`, though that script implements its own inline `curl` calls rather than sourcing this file.
 
 ## Configuration
 
@@ -86,7 +86,7 @@ The embed title is hardcoded to `Test Alert` in this file. In `auditkey-notifier
 
 ## Usage context
 
-This file is sourced by `auditkey-notifier.sh` after it extracts process metadata from a matching auditd event. The typical call pattern is:
+`auditkey-notifier.sh` uses the same notification pattern but implements its own inline `curl` calls rather than sourcing this file. `discordNotif.sh` is a standalone reference implementation. If you want to send notifications from a custom script, source this file after setting the required environment variables:
 
 ```sh
 PID=$(echo  "$line" | grep -oP '\bpid=\K\d+')
@@ -94,7 +94,7 @@ COMM=$(echo "$line" | grep -oP '\bcomm="\K[^"]+' )
 PPID=$(echo "$line" | grep -oP 'ppid=\K\d+')
 UID=$(echo  "$line" | grep -oP '\buid=\K\d+')
 
-# then the curl call is made inline (same structure as discordNotif.sh)
+. ./funcs/discordNotif.sh
 ```
 
 <Note>

@@ -10,7 +10,7 @@ The `funcs/` directory contains small helper scripts that are either sourced by 
     Detects the Linux distribution by checking for package managers. Returns a short identifier like `rhel` or `debian`.
   </Card>
   <Card title="discordNotif.sh" icon="bell" href="/funcs/discord-notif">
-    Sends a Discord embed notification via webhook. Called by `auditkey-notifier.sh` when audit keys trigger.
+    Sends a Discord embed notification via webhook. Shares the notification pattern used by `auditkey-notifier.sh`.
   </Card>
   <Card title="passwordHasher.sh" icon="lock" href="/funcs/password-hasher">
     Generates a SHA-512 password hash for use in `harden.sh` and the hostfile.
@@ -25,7 +25,7 @@ The `funcs/` directory contains small helper scripts that are either sourced by 
 | File | Purpose | How it's used |
 |---|---|---|
 | `funcs/detectOS.sh` | Detects the Linux distribution by checking for `dnf`, `apt`, `zypper`, `apk`, or `pacman` | Sourced or run directly; output captured with `$(./funcs/detectOS.sh)` |
-| `funcs/discordNotif.sh` | Sends a Discord embed with process details (`COMM`, `PID`, `PPID`, `UID`) to a webhook | Sourced — variables must be set before sourcing |
+| `funcs/discordNotif.sh` | Sends a Discord embed with process details (`COMM`, `PID`, `PPID`, `UID`) to a webhook | Standalone reference — source it or use inline as a pattern; requires env vars to be set first |
 | `funcs/passwordHasher.sh` | Generates a SHA-512 (`$6$`) password hash from a command-line argument | Run directly: `./funcs/passwordHasher.sh <password>` |
 | `funcs/shellColors.sh` | Defines ANSI color variables (`RED`, `GREEN`, `YELLOW`, etc.) | Sourced by scripts that use colored terminal output |
 | `funcs/requireRoot.sh` | Exits with an error message if the script is not running as root | Sourced at the top of scripts that require root privileges |

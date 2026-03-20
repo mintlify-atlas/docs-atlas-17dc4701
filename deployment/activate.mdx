@@ -84,6 +84,8 @@ chattr +i /etc/audit/rules.d/standard.rules
 
 The `chattr +i` flag prevents any user — including root — from modifying or deleting the rules file without first removing the immutable flag.
 
+The deployed ruleset covers: kernel parameter changes, module loading/unloading, mount operations, time changes, user/group/password database modifications, sudoers changes, PAM configuration, SSH configuration, systemd changes, network environment modifications, reconnaissance tools (`recon` key), suspicious activity tools (`susp_activity` key), privilege escalation, DAC permission modifications, and software management. See `auditkey-notifier.sh` for how `recon` and `susp_activity` events trigger Discord alerts.
+
 </Step>
 
 <Step title="Reload auditd rules">
@@ -113,6 +115,10 @@ mv /tmp/watchdawg.sh /etc/kernel/watchdawg
 mv /tmp/watchdawg-sources /etc/kernel/sources
 nohup /etc/kernel/watchdawg /etc/kerner/init-state /etc/kernel/sources > /etc/kernel/out 2>&1 &
 ```
+
+<Warning>
+There is a typo in `activate.sh` on the `nohup` line: the backup directory argument is `/etc/kerner/init-state` (missing the `l` — should be `/etc/kernel/init-state`). Watchdawg will create a backup directory at `/etc/kerner/init-state` instead of `/etc/kernel/init-state`. The monitoring will still function, but the backup path will differ from what you might expect.
+</Warning>
 
 Watchdawg monitors the files and directories listed in `/etc/kernel/sources` and logs any changes to `/etc/kernel/out`. The `chmod 700` restricts execution to root only.
 

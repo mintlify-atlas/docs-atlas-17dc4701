@@ -57,7 +57,7 @@ The scripts are organized around the competition timeline:
 
 <Steps>
   <Step title="Pre-competition">
-    Set up your hostfile with IP addresses, system names, and pre-generated password hashes. Run `backup.sh` locally to save a clean baseline.
+    Set up your hostfile with IP addresses, system names, and pre-generated password hashes using `funcs/passwordHasher.sh`. Create a `port-sources` file for each host in the `systems/` directory.
   </Step>
   <Step title="Competition start (first 15 minutes)">
     Run `minzero/deploy.sh` to push hardening scripts to all hosts in parallel. This sets firewalls, locks user accounts, and deploys your admin user across the entire range simultaneously.
