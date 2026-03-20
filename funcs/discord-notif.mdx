@@ -1,0 +1,102 @@
+---
+title: 'funcs/discordNotif.sh'
+description: 'Sends a Discord embed notification via webhook'
+---
+
+`discordNotif.sh` sends a Discord embed notification containing process details to a configured webhook URL. It is called by `auditkey-notifier.sh` when a monitored audit key triggers an event.
+
+## Configuration
+
+Three variables are defined at the top of the script and must be set before it is sourced:
+
+```sh
+ALERT_KEY1="recon"
+ALERT_KEY2="susp_activity"
+webhook="https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN"
+```
+
+| Variable | Purpose |
+|---|---|
+| `ALERT_KEY1` | The audit key name used as the embed title for the first alert type |
+| `ALERT_KEY2` | The audit key name for the second alert type |
+| `webhook` | The full Discord webhook URL that receives the `curl` POST |
+
+<Warning>
+The `webhook` variable in the source file contains an example URL. You must replace it with your own Discord webhook URL before use. Sending to the example URL will fail or post to someone else's channel.
+</Warning>
+
+## Environment variables read
+
+The script reads four variables that must be set in the calling context before the file is sourced:
+
+| Variable | Description |
+|---|---|
+| `COMM` | The command name of the process that triggered the audit event |
+| `PID` | Process ID of the triggering process |
+| `PPID` | Parent process ID |
+| `UID` | User ID of the process owner |
+
+`auditkey-notifier.sh` extracts these values from the raw auditd event line using `grep -oP` before sourcing this file.
+
+<Note>
+If any of these variables are unset when the script runs, the corresponding embed field will be sent as an empty string. No error is raised.
+</Note>
+
+## Script
+
+```sh
+ALERT_KEY1="recon"
+ALERT_KEY2="susp_activity"
+webhook="https://discord.com/api/webhooks/1475853787406143551/WktnCqT0mRF6qez5biL7fguzgzA1_Yt7PWQ__oDa_VxstC8lZhERXzExKl2MgJiFGso4"
+
+COMM="hi"
+JSON='{"embeds":[{"title":"'$ALERT_KEY1'", "fields": [{"name": "PID", "value": "'$PID'"}]}]}'
+echo "$PID"
+echo "--- ALERT TRIGGERED ---"
+curl -H "Content-Type: application/json" -d '{
+   "embeds":[{"title":"Test Alert",
+      "fields":[{"name":"COMM","value":"'$COMM'"},
+                {"name":"PID","value":"'$PID'"},
+                {"name":"PPID","value":"'$PPID'"},
+                {"name":"UID","value":"'$UID'"}
+               ]
+            }]
+   }' "$webhook"
+```
+
+## Discord embed structure
+
+The `curl` call posts the following JSON structure to the webhook:
+
+```json
+{
+  "embeds": [{
+    "title": "Test Alert",
+    "fields": [
+      { "name": "COMM",  "value": "nmap" },
+      { "name": "PID",   "value": "4821" },
+      { "name": "PPID",  "value": "1003" },
+      { "name": "UID",   "value": "1001" }
+    ]
+  }]
+}
+```
+
+The embed title is hardcoded to `Test Alert` in this file. In `auditkey-notifier.sh`, the title is set to the matching audit key name (`recon` or `susp_activity`) inline.
+
+## Usage context
+
+This file is sourced by `auditkey-notifier.sh` after it extracts process metadata from a matching auditd event. The typical call pattern is:
+
+```sh
+PID=$(echo  "$line" | grep -oP '\bpid=\K\d+')
+COMM=$(echo "$line" | grep -oP '\bcomm="\K[^"]+' )
+PPID=$(echo "$line" | grep -oP 'ppid=\K\d+')
+UID=$(echo  "$line" | grep -oP '\buid=\K\d+')
+
+# then the curl call is made inline (same structure as discordNotif.sh)
+```
+
+<Note>
+The `JSON` variable defined near the top of the script (`JSON='{"embeds":[...]}'`) is constructed but not used in the final `curl` call. The actual payload is passed inline. This appears to be leftover from an earlier version.
+</Note>

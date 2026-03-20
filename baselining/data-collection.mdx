@@ -1,0 +1,76 @@
+---
+title: 'baseline/data-collection.sh'
+description: 'Lightweight snapshot script that captures system state to /tmp/bk for comparison'
+---
+
+`baseline/data-collection.sh` captures a point-in-time snapshot of a system's state to `/tmp/bk/`. It is called automatically by `specific.sh` on the live (potentially compromised) system before running diff comparisons against a clean baseline.
+
+## Usage
+
+```sh
+sudo ./baseline/data-collection.sh
+```
+
+Must be run as root. The script checks `$EUID` and exits if it is not `0`.
+
+No arguments are accepted. When used as part of the `specific.sh` workflow, it is called automatically — you do not need to invoke it directly.
+
+## Output location
+
+All data is written to `/tmp/bk/`. At the end of the script, the directory is archived to `/tmp/baseline.tar.gz`.
+
+Using `/tmp` rather than `/var/bk` (as `backup.sh` does) keeps the output in a world-accessible location, which is safer when the system's filesystem permissions may have been tampered with.
+
+## What it captures
+
+### Filesystem copies
+
+The following directories are recursively copied to `/tmp/bk/filesystem/`:
+
+| Source | Destination |
+|---|---|
+| `/etc/` | `/tmp/bk/filesystem/etc/` |
+| `/root/` | `/tmp/bk/filesystem/root/` |
+| `/home/` | `/tmp/bk/filesystem/home/` |
+
+### System data files
+
+| Output file | Source command | Description |
+|---|---|---|
+| `kernelModules` | `lsmod` | Currently loaded kernel modules |
+| `servicesActiveRunning` | `systemctl list-units --state=running` or `rc-status --started` | Services currently running |
+| `servicesEnabledAutostart` | `systemctl list-unit-files --state=enabled` or `rc-update -v show` | Services enabled to start on boot |
+| `servicesAllUnits` | `systemctl list-units --all` or `rc-update show` | All service units |
+| `packages` | `apk info`, `dpkg -l`, or `rpm -qa` | Installed packages |
+| `openPorts` | `ss -tulpn` | Listening TCP and UDP ports |
+| `iptablesRules` | `iptables -L` | Current firewall rules |
+| `environmentalVariables` | `env` | Current environment variables |
+| `suidbits` | `find / -perm -u=s -type f` | All files with the SUID bit set |
+
+The script detects whether the system uses systemd or OpenRC and runs the appropriate service commands. For packages, it checks for `apk`, `dpkg`, and `rpm` in that order.
+
+<Note>
+The SUID file search runs across the entire filesystem (`/`) and suppresses permission errors with `2>/dev/null`. On a large system this step may take a moment.
+</Note>
+
+## Archive
+
+After all data is collected, the backup directory is compressed:
+
+```sh
+tar -cpzf /tmp/baseline.tar.gz /tmp/bk
+```
+
+`specific.sh` reads this archive from `/tmp/baseline.tar.gz` when running its diff comparisons.
+
+## Difference from backup.sh
+
+| | `backup.sh` | `data-collection.sh` |
+|---|---|---|
+| Output directory | `/var/bk/` | `/tmp/bk/` |
+| Archive location | `~/bk.tar.gz` | `/tmp/baseline.tar.gz` |
+| When to run | Competition start — initial snapshot | Called by `specific.sh` during audit |
+| Filesystem copies | `/etc/`, `/home/`, `/var/www/`, `/var/log/`, `/var/spool/` | `/etc/`, `/root/`, `/home/` |
+| Additional data | Processes (`ps aux`, `pstree`) | — |
+
+`backup.sh` is your ground truth snapshot from the start of the competition. `data-collection.sh` is a lightweight, portable capture designed to be run on a live system under audit.

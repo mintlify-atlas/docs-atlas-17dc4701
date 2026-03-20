@@ -1,80 +1,204 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Harden your first host in under 5 minutes"
 ---
 
-## Get started in three steps
+This guide walks you through deploying CyberScripts to a set of competition hosts using `minzero/deploy.sh` and `activate.sh`. By the end you will have locked-down firewalls, a hardened user environment, auditd rules, and Watchdawg running on every host in your range.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Install the following on your **control machine** before you begin:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+| Dependency | Purpose | Install |
+|---|---|---|
+| `sshpass` | Non-interactive SSH/SCP with a password | `apt install sshpass` |
+| `parallel` | Deploy to all hosts simultaneously | `apt install parallel` |
 
-### Step 2: Deploy your changes
+<Warning>
+Both `sshpass` and `parallel` must be installed on the machine you run `deploy.sh` from — not on the target hosts. The scripts handle everything else on the remote side.
+</Warning>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+---
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Steps>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+<Step title="Generate password hashes">
 
-### Step 3: Go live
+Before building your hostfile you need a pre-hashed password for the `bluey` admin account that will be created on every host. Use `funcs/passwordHasher.sh` to generate one:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+```bash
+bash funcs/passwordHasher.sh 'MyStr0ngP@ssword!'
+```
+
+The script uses `openssl passwd -6` (SHA-512) with a random salt and prints the hash to stdout:
+
+```bash
+$6$a3f8c2d1e4b7f9a0$Kx2Lv...
+```
+
+Copy the full hash — you will paste it into the hostfile in the next step.
+
+<Note>
+Run the hasher once and reuse the same hash for all hosts if you want every `bluey` account to share a password. Run it separately for each host if you want per-host passwords.
+</Note>
+
+</Step>
+
+<Step title="Create the hostfile">
+
+Create a file named `hostfile` inside the `minzero/` directory. Each line represents one target host:
+
+```
+<ip> <system-name> <password-hash>
+```
+
+A real example with three hosts:
+
+```
+192.168.1.10 webserver $6$a3f8c2d1e4b7f9a0$Kx2LvExampleHashAbcDef1234567890abcdef
+192.168.1.20 database $6$a3f8c2d1e4b7f9a0$Kx2LvExampleHashAbcDef1234567890abcdef
+192.168.1.30 dns $6$b9e1d4f2c7a8b3e5$Pq7MwExampleHashXyzUvw0987654321fedcba
+```
+
+- **`<ip>`** — the host's IP address
+- **`<system-name>`** — a short identifier that must match a directory under `systems/`
+- **`<password-hash>`** — the full SHA-512 hash from `passwordHasher.sh`
+
+<Warning>
+The `<system-name>` field must exactly match the name of the corresponding directory under `systems/`. `deploy.sh` resolves `systems/<system-name>/port-sources` using this value.
+</Warning>
+
+</Step>
+
+<Step title="Create the port-sources file for each host">
+
+For every host in your hostfile, create a `port-sources` file at `systems/<system-name>/port-sources`. This file tells `autofirewall.sh` which ports to allow.
+
+**Format:**
+- Line 1: space-separated list of **inbound** TCP ports to allow
+- Line 2: space-separated list of **outbound** TCP (and UDP for port 53) ports to allow
+
+Example for a web server that serves HTTP/HTTPS and needs to reach DNS and a package repo:
+
+```
+80 443 22
+53 80 443
+```
+
+Example for a database host that accepts MySQL connections and talks out to DNS only:
+
+```
+3306 22
+53
+```
+
+`autofirewall.sh` reads these values at deploy time. All inbound ports get a `NEW` TCP accept rule, port 53 outbound additionally gets a UDP rule, and everything else is dropped by default policy. ICMP is allowed inbound and blocked outbound.
+
+<Note>
+Port 22 (SSH) must appear in the inbound list if you need to keep SSH access open after deployment. Forgetting it will lock you out.
+</Note>
+
+</Step>
+
+<Step title="Run deploy.sh">
+
+From the `minzero/` directory, run:
+
+```bash
+bash minzero/deploy.sh <username> <password>
+```
+
+For example, if the current credentials on all hosts are `root` / `toor`:
+
+```bash
+bash minzero/deploy.sh root toor
+```
+
+`deploy.sh` does the following across all hosts in parallel (up to 10 at a time via `parallel -j 10`):
+
+1. **Compresses** `c2scanner.sh`, `sshd_config`, `backup.sh`, `watchdawg.sh`, `watchdawg-sources`, and `auditd-rules` into `minzero.tar.gz`.
+2. **Uploads** `harden.sh`, `autofirewall.sh`, `activate.sh`, `minzero.tar.gz`, and the host's `port-sources` file to `/tmp/` on the remote.
+3. **Runs `autofirewall.sh`** via `sudo` to lock down iptables immediately.
+4. **Runs `harden.sh`** with the password hash to set up the `bluey` user, lock all shells to `/bin/false`, and set the account password.
+
+Progress and errors are streamed to the terminal and appended to `minzero/deploy.log`.
+
+<Warning>
+`deploy.sh` shreds `/tmp/pass` (the temporary sudo password helper) at the end of `harden.sh` — but it does store your current password in memory during the run. Run it on a machine you control, not a shared jumpbox.
+</Warning>
+
+</Step>
+
+<Step title="SSH into each host and run activate.sh">
+
+After `deploy.sh` completes, SSH into each host as `bluey` and run `activate.sh` with root privileges:
+
+```bash
+ssh bluey@192.168.1.10
+sudo /tmp/activate.sh
+```
+
+`activate.sh` must be run as root (`id -u` == 0). It performs the following in order:
+
+1. **Extracts** `minzero.tar.gz` in `/tmp` to unpack `backup.sh`, `c2scanner.sh`, `watchdawg.sh`, `watchdawg-sources`, and `auditd-rules`.
+2. **Runs `backup.sh`** to snapshot the current system state.
+3. **Installs and configures auditd** — auto-detects the package manager (`dnf`, `apt`, or `apk`), installs auditd if missing, copies `auditd-rules` to `/etc/audit/rules.d/standard.rules`, immutably locks the file with `chattr +i`, and reloads the ruleset.
+4. **Deploys Watchdawg** — sets strict permissions (`chmod 700`), moves it to `/etc/kernel/watchdawg`, and starts it in the background via `nohup`.
+5. **Installs BusyBox** — downloads the static binary, installs it to `/opt/busybox`, adds `/opt/busybox` to `PATH` in `/etc/profile`, and replaces `/bin/false` with the BusyBox version.
+6. **Hardens the SSH config** — backs up the existing `sshd_config` to `/etc/ssh/.old`, deploys the hardened version, restarts `sshd`, and locks the file with `chattr +i`.
+
+```
+Starting activation script...
+==> Extracting resources
+==> Deploying backup
+==> Deploying auditd
+====> Installing auditd
+====> Applying rules
+====> Restarting service
+==> Deploying watchdawg
+==> Deploying busybox
+==> Replacing /bin/false
+==> Changing ssh config
+[DONE] Log out if using ssh and log back in to activate busybox
+Finished activation script
+Check out the baselining scripts standard.sh and specific.sh
+```
+
+<Note>
+After `activate.sh` completes, log out of your SSH session and log back in. This is required for the updated `PATH` (which includes `/opt/busybox`) to take effect in your shell.
+</Note>
+
+</Step>
+
+<Step title="Run the standard baseline audit">
+
+Once `activate.sh` has run on a host, audit it with the standard baseline script:
+
+```bash
+bash baseline/standard.sh
+```
+
+This walks through 20+ security checks on the live system, covering users, open ports, running services, scheduled jobs, and more. Run it immediately after activation to establish a known-good state, then re-run it any time you suspect compromise.
+
+</Step>
+
+</Steps>
+
+---
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Autofirewall" icon="shield" href="/hardening/autofirewall">
+    Understand exactly which iptables rules autofirewall.sh applies and how to customize port-sources
+  </Card>
+  <Card title="Harden" icon="lock" href="/hardening/harden">
+    Details on shell lockdown, the bluey user, and account locking behavior
+  </Card>
+  <Card title="Watchdawg" icon="dog" href="/scripts/watchdawg">
+    Configure which files and directories Watchdawg monitors for changes
+  </Card>
+  <Card title="Standard Baseline" icon="list-check" href="/baselining/standard">
+    Full reference for every check in the standard baseline script
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

@@ -1,0 +1,89 @@
+---
+title: 'angryc2scanner.sh'
+description: 'Like c2scanner, but automatically kills any process that opens a new outbound TCP connection'
+---
+
+`angryc2scanner.sh` works the same as `c2scanner.sh` — it polls `ss` every 500ms and diffs snapshots — but when it detects a change it immediately builds a kill list of all TCP-connected PIDs and walks up each process's parent chain, killing every ancestor up to PID 1.
+
+<Warning>
+This script kills processes in cold blood. Any process that opens a new TCP connection while `angryc2scanner.sh` is running will be terminated along with all its parents. Legitimate services that open outbound connections (cron jobs, package managers, monitoring agents) will also be killed. Use `c2scanner.sh` first to understand your baseline before running this.
+</Warning>
+
+## Usage
+
+```sh
+sudo ./angryc2scanner.sh
+```
+
+Root privileges are required because the script calls `kill -9` on arbitrary PIDs, which may be owned by other users.
+
+## How it works
+
+<Steps>
+  <Step title="Socket polling">
+    Same as `c2scanner.sh`: polls `ss --no-header -tupn` every 500ms and saves each snapshot to a timestamped file in `scans/`. Diffs the current snapshot against the previous one.
+  </Step>
+  <Step title="Detect a change">
+    If the diff is non-empty, prints the event and begins the kill phase.
+  </Step>
+  <Step title="Build the hitlist">
+    Extracts PIDs of all active TCP connections from `ss -tpn` using a regex:
+
+    ```sh
+    ss -tpn | grep -Po 'pid=\K[0-9]+' > hitlist
+    ```
+  </Step>
+  <Step title="Kill each process and its parents">
+    For each PID on the hitlist, walks up the process tree via PPID until it reaches PID 1 or detects a circular reference, killing each process along the way.
+  </Step>
+</Steps>
+
+## Kill loop
+
+```sh
+echo "====== COMMITING MURDER ======"
+ss -tpn | grep -Po 'pid=\K[0-9]+' > hitlist
+while IFS= read -r line; do
+   ppid=$(ps --no-headers -fp "$line" | awk '$1 { print $3 }')
+   sudo kill -9 "$line"
+   while [ "$ppid" != "$line" ] && [ "$ppid" != "1" ]; do
+     prev=$ppid
+     ppid=$(ps --no-headers -fp "$prev" | awk '$1 { print $3 }')
+     kill -9 prev;
+     echo "done murding $prev"
+     done
+   echo "done murding $line"
+done < hitlist
+```
+
+<Note>
+There is a bug on line 30: `kill -9 prev` is missing the `$` sigil — it passes the literal string `prev` as the PID argument rather than the variable's value. The parent-chain kill will not work correctly. The initial `kill -9 "$line"` on the direct PID does function correctly.
+</Note>
+
+## Differences from c2scanner
+
+| Feature | c2scanner | angryc2scanner |
+|---|---|---|
+| Socket polling | `ss -tupn` | `ss --no-header -tupn` |
+| On change | Print diff | Print diff + kill PIDs |
+| Requires root | No | Yes |
+| Safe to run continuously | Yes | No — kills legitimate connections |
+
+## Recommendations
+
+<Tip>
+Run `c2scanner.sh` first. Observe all normal outbound connections made by your services during a full activity cycle. Only switch to `angryc2scanner.sh` when you have a confirmed C2 connection you cannot stop any other way, and you understand which services will be collateral damage.
+</Tip>
+
+A safer workflow:
+
+```sh
+# Step 1: observe with c2scanner
+./c2scanner.sh | tee /var/log/c2scanner.log
+
+# Step 2: review the log, identify legitimate connections
+less /var/log/c2scanner.log
+
+# Step 3: only if needed, switch to angryc2scanner
+sudo ./angryc2scanner.sh
+```

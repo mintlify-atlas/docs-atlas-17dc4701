@@ -1,0 +1,274 @@
+---
+title: 'baseline/standard.sh'
+description: 'Interactive security audit covering 20+ checks on a live Linux system'
+---
+
+`baseline/standard.sh` walks you through a structured security audit of a live Linux system. It runs over 20 checks covering accounts, network exposure, persistence mechanisms, package integrity, and known vulnerabilities. After each section, the script pauses so you can review the output before moving on.
+
+Version: `0.1.1`
+
+## Usage
+
+```sh
+sudo ./baseline/standard.sh
+```
+
+Must be run as root. The script exits immediately if it detects a non-root user.
+
+No arguments are required. The script is entirely interactive — press **Enter** at each prompt to advance to the next check.
+
+## Color coding
+
+The script uses terminal colors to highlight notable findings:
+
+| Color | Meaning |
+|---|---|
+| Red | Alert — requires immediate attention |
+| Blue | Informational output |
+| Yellow | Warning — review carefully |
+| Green | Done / all clear |
+
+## Checks
+
+The checks run in order. Press Enter between each section to continue.
+
+<AccordionGroup>
+  <Accordion title="1. OS release info">
+    Displays the contents of `/etc/os-release` so you can confirm the distribution, version, and any relevant OS metadata.
+
+    ```sh
+    cat /etc/os-release
+    ```
+  </Accordion>
+
+  <Accordion title="2. Preloaded libraries">
+    Prints the `$LD_PRELOAD` environment variable. A non-empty value may indicate a library injection attack.
+
+    ```sh
+    printf "$LD_PRELOAD\n"
+    ```
+  </Accordion>
+
+  <Accordion title="3. PATH variable">
+    Prints the current `$PATH`. Look for suspicious or unusual directories — especially writable paths early in the list that could shadow legitimate binaries.
+
+    ```sh
+    printf "$PATH\n"
+    ```
+  </Accordion>
+
+  <Accordion title="4. System time">
+    Displays the current system time and timezone via `timedatectl`. Incorrect system time can affect log correlation and certificate validation.
+
+    ```sh
+    timedatectl
+    ```
+  </Accordion>
+
+  <Accordion title="5. Open ports">
+    Lists all listening TCP and UDP ports with associated processes using both `ss` and `lsof`.
+
+    ```sh
+    ss -tulpn
+    sudo lsof -i -P -n
+    ```
+  </Accordion>
+
+  <Accordion title="6. iptables rules">
+    Displays the current firewall ruleset.
+
+    ```sh
+    iptables -L
+    ```
+  </Accordion>
+
+  <Accordion title="7. UID 0 accounts">
+    Checks `/etc/passwd` for any account with UID 0 other than `root`. If found, prints a red alert.
+
+    ```sh
+    awk -F: '($3 == 0 && $1 != "root")' /etc/passwd
+    ```
+
+    <Warning>
+    Multiple UID 0 accounts is a strong indicator of a backdoor account.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="8. PAM passwordless auth">
+    Searches all files in `/etc/pam.d/` for `nullok`, which allows login without a password. Alerts in red if found.
+
+    ```sh
+    grep -Rq "nullok" /etc/pam.d
+    ```
+  </Accordion>
+
+  <Accordion title="9. NOPASSWD in sudoers">
+    Checks both `/etc/sudoers` and all files under `/etc/sudoers.d/` for `NOPASSWD` entries, which allow passwordless privilege escalation.
+
+    ```sh
+    sudo grep "NOPASSWD" /etc/sudoers
+    sudo grep -R "NOPASSWD" /etc/sudoers.d/
+    ```
+  </Accordion>
+
+  <Accordion title="10. Privileged users">
+    Lists members of the `sudo` and `wheel` groups. Also reminds you to manually check `/etc/sudoers` for other users with root access.
+
+    ```sh
+    grep -Po '^sudo.+:\K.*$' /etc/group
+    grep -Po '^wheel.+:\K.*$' /etc/group
+    ```
+  </Accordion>
+
+  <Accordion title="11. Users without passwords">
+    Checks `/etc/shadow` for accounts with an empty password field. Lists each affected username in red if found.
+
+    ```sh
+    awk -F: '($2 == "") {print $1}' /etc/shadow
+    ```
+  </Accordion>
+
+  <Accordion title="12. SSH authorized_keys">
+    Displays the contents of `/root/.ssh/authorized_keys` and then checks every user directory under `/home/` for an `authorized_keys` file, printing each one found.
+
+    ```sh
+    sudo cat /root/.ssh/authorized_keys
+    for user_dir in /home/*; do
+      auth_file="$user_dir/.ssh/authorized_keys"
+      if [ -f "$auth_file" ]; then
+        cat "$auth_file"
+      fi
+    done
+    ```
+  </Accordion>
+
+  <Accordion title="13. /etc/init.d scripts">
+    Lists all scripts present in `/etc/init.d/`. Unexpected scripts here may be persistence mechanisms.
+
+    ```sh
+    ls /etc/init.d
+    ```
+  </Accordion>
+
+  <Accordion title="14. Suspicious processes">
+    Searches running processes for common attacker tools and shells: `nc`, `netcat`, `bash`, `python`, `perl`, `sh`.
+
+    ```sh
+    ps aux | grep -E 'nc|netcat|bash|python|perl|sh'
+    ```
+  </Accordion>
+
+  <Accordion title="15. Crontabs">
+    Displays cron entries from multiple locations: the system crontab, periodic job directories, per-user crontab spools (Debian and Fedora layouts), and anacron.
+
+    ```sh
+    cat /etc/crontab
+    cat /cron*/*
+    cat /var/spool/cron/crontabs/*
+    cat /var/spool/cron/*
+    cat /etc/anacrontab
+    ```
+  </Accordion>
+
+  <Accordion title="16. at jobs">
+    Lists all scheduled `at` jobs.
+
+    ```sh
+    atq
+    ```
+  </Accordion>
+
+  <Accordion title="17. systemd timers">
+    Lists all systemd timers including inactive ones.
+
+    ```sh
+    systemctl list-timers --all --no-pager
+    ```
+  </Accordion>
+
+  <Accordion title="18. Package repositories">
+    Displays configured package repositories. On dnf-based systems, runs `dnf repolist`. On apt-based systems, displays `/etc/apt/sources.list` and the Ubuntu sources file.
+
+    ```sh
+    # dnf
+    dnf repolist
+
+    # apt
+    cat /etc/apt/sources.list
+    cat /etc/apt/sources.list.d/ubuntu.sources
+    ```
+  </Accordion>
+
+  <Accordion title="19. World-writable files in /etc/">
+    Finds files at the root of `/etc/` that are world-writable. These could be modified by any local user or process.
+
+    ```sh
+    find /etc -maxdepth 1 -perm -o+w -ls
+    ```
+  </Accordion>
+
+  <Accordion title="20. Docker/Podman containers">
+    Lists all containers (running and stopped) if Docker or Podman is installed.
+
+    ```sh
+    sudo docker ps -a   # if Docker is present
+    sudo podman ps -a   # if Podman is present
+    ```
+  </Accordion>
+
+  <Accordion title="21. Package checksums">
+    Verifies installed package files against their recorded checksums to detect tampered binaries.
+
+    ```sh
+    dpkg -V | grep -v missing   # Debian / Ubuntu
+    apk verify                  # Alpine
+    ```
+
+    <Note>RPM-based verification (`rpm -Va`) is present in the script but currently commented out.</Note>
+  </Accordion>
+
+  <Accordion title="22. PwnKit vulnerability check">
+    Checks whether the installed version of polkit is vulnerable to CVE-2021-4034 (PwnKit). Alerts in red if vulnerable, and shows the mitigation command.
+
+    ```sh
+    # Mitigation if vulnerable:
+    sudo chmod -s $(which pkexec)
+    ```
+
+    The check covers affected Debian package versions (`0.105-26`) and RHEL polkit versions in the `0.113`–`0.119` range.
+  </Accordion>
+
+  <Accordion title="23. Executable files in /etc/">
+    Lists all executable files anywhere under `/etc/`. Executables in this directory are unusual and may indicate planted scripts.
+
+    ```sh
+    find /etc -type f -executable
+    ```
+  </Accordion>
+
+  <Accordion title="24. Lynis audit">
+    Installs Lynis if not already present (via `dnf`, `apt`, or `apk`), then runs a full system audit in the background. Output is written to `/tmp/lynis`.
+
+    ```sh
+    nohup lynis audit system > /tmp/lynis 2>&1 &
+    ```
+
+    Check `/tmp/lynis` after the scan completes.
+  </Accordion>
+
+  <Accordion title="25. linpeas">
+    Downloads the latest `linpeas.sh` from the PEASS-ng GitHub releases and runs it in the background. Output is written to `/tmp/linpeas`.
+
+    ```sh
+    curl -L https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh -o /tmp/lp.sh
+    chmod +x /tmp/lp.sh
+    nohup /tmp/lp.sh > /tmp/linpeas 2>&1 &
+    ```
+
+    Check `/tmp/linpeas` after the scan completes.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+Lynis and linpeas both run in the background after you advance past their respective prompts. Continue auditing manually while they scan, then review their output files once the competition stabilizes.
+</Tip>

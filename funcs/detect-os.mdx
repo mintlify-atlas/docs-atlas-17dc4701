@@ -1,0 +1,81 @@
+---
+title: 'funcs/detectOS.sh'
+description: 'Detects the Linux distribution by checking for package managers'
+---
+
+`detectOS.sh` identifies the Linux distribution of the current host by checking for the presence of common package manager binaries. It prints a short lowercase identifier to stdout and exits.
+
+## Usage
+
+You can run it directly and capture its output:
+
+```sh
+./funcs/detectOS.sh
+```
+
+Or source it — though running it directly and capturing the output with a subshell is the typical pattern:
+
+```sh
+OS=$(./funcs/detectOS.sh)
+```
+
+## How it works
+
+The script checks for package managers in priority order using `command -v`. The first match wins:
+
+| Package manager | Output |
+|---|---|
+| `dnf` | `rhel` |
+| `apt` | `debian` |
+| `zypper` | `opensuse` |
+| `apk` | `alpine` |
+| `pacman` | `arch` |
+| _(none found)_ | `What are you using, Solaris?` |
+
+If no known package manager is found, the script falls back to the string `What are you using, Solaris?` — this is intentional and acts as a signal that the OS is unrecognized.
+
+## Script
+
+```sh
+#!/bin/sh
+
+if command -v dnf &> /dev/null; then
+   echo "rhel"
+else if command -v apt &> /dev/null; then
+   echo "debian"
+else if command -v zypper &> /dev/null; then
+   echo "opensuse"
+else if command -v apk &> /dev/null; then
+   echo "alpine"
+else if command -v pacman &> /dev/null; then
+   echo "arch"
+else
+   echo "What are you using, Solaris?"
+fi
+```
+
+## Example: branching on OS in another script
+
+```sh
+OS=$(./funcs/detectOS.sh)
+
+case "$OS" in
+  rhel)
+    dnf install -y auditd
+    ;;
+  debian)
+    apt-get install -y auditd
+    ;;
+  alpine)
+    apk add audit
+    ;;
+  *)
+    printf "Unsupported OS: %s\n" "$OS"
+    exit 1
+    ;;
+esac
+```
+
+<Note>
+The detection logic from this script is also used inline throughout the suite — for example in `deploy.sh` and `activate.sh` — without calling this file. `detectOS.sh` is the canonical, standalone version of that logic.
+</Note>

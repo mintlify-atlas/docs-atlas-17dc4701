@@ -1,0 +1,213 @@
+---
+title: "activate.sh"
+description: "Run on each host after deploy.sh to fully activate the security suite"
+---
+
+`activate.sh` completes the deployment on each target host. After `deploy.sh` has uploaded all files to `/tmp/`, SSH into the host and run `activate.sh` as root to install auditd, start Watchdawg, deploy BusyBox, and lock down the SSH configuration.
+
+## Usage
+
+```bash
+sudo /tmp/activate.sh
+```
+
+`activate.sh` must run as root. It checks `id -u` at startup and exits immediately if not:
+
+```sh
+if [ "$(id -u)" -ne 0 ]; then
+  printf "This script requires root privileges. Exiting\n"
+  exit 1
+fi
+```
+
+## Activation sequence
+
+<Steps>
+
+<Step title="Extract minzero.tar.gz">
+
+`activate.sh` changes to `/tmp/` and extracts the tarball uploaded by `deploy.sh`:
+
+```sh
+cd /tmp
+tar -xzvf minzero.tar.gz
+```
+
+This unpacks `c2scanner.sh`, `sshd_config`, `backup.sh`, `watchdawg.sh`, `watchdawg-sources`, and `auditd-rules` into `/tmp/`.
+
+</Step>
+
+<Step title="Run backup.sh">
+
+Before anything is changed, `backup.sh` captures the current system state:
+
+```sh
+chmod +x backup.sh
+./backup.sh | tee backup.out
+```
+
+Output is written to `/tmp/backup.out`. Run this as early as possible — it records the competition initial state before any further changes are made.
+
+</Step>
+
+<Step title="Install auditd">
+
+`activate.sh` checks whether `auditd` is already present and installs it if not, auto-detecting the package manager:
+
+```sh
+if command -v auditd > /dev/null; then
+   printf "Already installed\n"
+else
+   if command -v dnf &> /dev/null; then
+      dnf install audit -y
+   elif command -v apt &> /dev/null; then
+      apt install auditd -y
+   elif command -v apk &> /dev/null; then
+      apk add audit
+   fi
+fi
+```
+
+This covers RHEL/CentOS (`dnf`), Debian/Ubuntu (`apt`), and Alpine (`apk`).
+
+</Step>
+
+<Step title="Deploy auditd rules">
+
+The competition ruleset is copied to the standard auditd rules directory, locked to root-only access, and made immutable:
+
+```sh
+cp auditd-rules /etc/audit/rules.d/standard.rules
+chmod 0600 /etc/audit/rules.d/standard.rules
+chattr +i /etc/audit/rules.d/standard.rules
+```
+
+The `chattr +i` flag prevents any user — including root — from modifying or deleting the rules file without first removing the immutable flag.
+
+</Step>
+
+<Step title="Reload auditd rules">
+
+The rules are applied immediately without requiring a full service restart when `augenrules` is available:
+
+```sh
+if command -v augenrules >/dev/null 2>&1; then
+    augenrules --load
+else
+    service auditd restart
+fi
+```
+
+`augenrules --load` compiles all rule files in `/etc/audit/rules.d/` and loads them into the running kernel. If `augenrules` is not present, the service is restarted instead.
+
+</Step>
+
+<Step title="Deploy Watchdawg">
+
+Watchdawg is installed to a non-obvious location and started in the background:
+
+```sh
+chmod 700 watchdawg.sh
+mkdir -p /etc/kernel
+mv /tmp/watchdawg.sh /etc/kernel/watchdawg
+mv /tmp/watchdawg-sources /etc/kernel/sources
+nohup /etc/kernel/watchdawg /etc/kerner/init-state /etc/kernel/sources > /etc/kernel/out 2>&1 &
+```
+
+Watchdawg monitors the files and directories listed in `/etc/kernel/sources` and logs any changes to `/etc/kernel/out`. The `chmod 700` restricts execution to root only.
+
+</Step>
+
+<Step title="Install BusyBox">
+
+A static BusyBox binary is downloaded from `busybox.net` and installed to `/opt/busybox/`:
+
+```sh
+curl -k -L -O https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox
+chmod +x busybox
+mkdir /opt/busybox
+cp busybox /opt/busybox/
+/opt/busybox/busybox --install -s /opt/busybox
+printf 'export PATH=/opt/busybox:$PATH' >> /etc/profile
+export PATH=/opt/busybox:$PATH
+```
+
+`busybox --install -s` creates symlinks for every BusyBox applet in `/opt/busybox/`. Adding `/opt/busybox` at the front of `PATH` in `/etc/profile` ensures these applets take precedence over any system binaries that may have been tampered with.
+
+<Note>
+The `PATH` update in `/etc/profile` takes effect for new login shells. You need to log out and back in after `activate.sh` completes to get the BusyBox path active in your session.
+</Note>
+
+</Step>
+
+<Step title="Replace /bin/false">
+
+The system `/bin/false` is replaced with the trusted BusyBox version:
+
+```sh
+cp /opt/busybox/false /bin/false
+```
+
+All locked user accounts (set to `/bin/false` shell by `harden.sh`) will now invoke this known-good binary instead of whatever was originally on the system.
+
+</Step>
+
+<Step title="Harden the SSH configuration">
+
+`activate.sh` backs up the existing SSH config, deploys the hardened version, restarts the SSH service, and then immutably locks the file:
+
+```sh
+cp /etc/ssh/sshd_config /etc/ssh/.old
+cp sshd_config /etc/ssh/
+systemctl restart ssh
+systemctl restart sshd
+chattr +i /etc/ssh/sshd_config
+```
+
+<Warning>
+`activate.sh` restarts both `ssh` and `sshd` to cover different init systems. If you are connected via SSH when this step runs, your current session will remain open, but **new connections must satisfy the hardened config**. Verify you can open a new SSH session before logging out. If the hardened `sshd_config` blocks your access, recover via the console.
+</Warning>
+
+The `chattr +i` flag on `/etc/ssh/sshd_config` prevents attackers from modifying the SSH config even with root access.
+
+</Step>
+
+</Steps>
+
+## Optional hooks
+
+Two environment variable hooks are available for extended deployment scenarios:
+
+| Variable | Value | Effect |
+|---|---|---|
+| `DEPLOY_SPLUNK` | `yes` | Creates the `splunk` group and user for Splunk forwarder setup |
+| `DEPLOY_TIMESYNCING` | `yes` | Reserved for PTP time-syncing deployment (not yet implemented) |
+
+Set the variable before running the script:
+
+```bash
+export DEPLOY_SPLUNK=yes
+sudo -E /tmp/activate.sh
+```
+
+<Note>
+Use `sudo -E` to preserve your environment variables when elevating to root.
+</Note>
+
+## After activation
+
+When `activate.sh` completes you will see:
+
+```
+[DONE] Log out if using ssh and log back in to activate busybox
+Finished activation script
+Check out the baselining scripts standard.sh and specific.sh
+```
+
+Log out of your SSH session and log back in. This is required for the `/opt/busybox` `PATH` entry from `/etc/profile` to take effect in your shell.
+
+Then run the standard baseline audit to confirm the host is in a known-good state:
+
+```bash
+bash baseline/standard.sh
+```

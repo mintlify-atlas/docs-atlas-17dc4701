@@ -1,0 +1,112 @@
+---
+title: 'auditkey-notifier.sh'
+description: 'Streams auditd events to Discord via webhook when configured audit keys are triggered'
+---
+
+`auditkey-notifier.sh` tails the auditd Unix socket and sends a Discord embed notification whenever an audit event matching one of the configured key names is received. This gives your team real-time alerts for suspicious activity without polling log files.
+
+## Prerequisites
+
+- `auditd` must be installed and running.
+- Audit rules must be loaded that use the key names `recon` and/or `susp_activity`.
+- `nc` (netcat) must support the `-U` flag for Unix socket connections.
+- A Discord webhook URL must be configured in the script.
+
+## Configuration
+
+Before running, open the script and set the `webhook` variable. The placeholder is on line 8:
+
+```sh
+# YOU NEED TO FILL THE webhook VARIABLE TO MAKE THE PROGRAM WORK
+webhook="https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN"
+```
+
+The audit keys to watch are defined at the top of the script:
+
+```sh
+ALERT_KEY1="recon"
+ALERT_KEY2="susp_activity"
+```
+
+Change these values to match the key names used in your auditd rules.
+
+<Warning>
+The script will not function without a valid webhook URL. The `curl` call will fail silently — there is no error handling if the webhook is unset or invalid.
+</Warning>
+
+## Usage
+
+```sh
+./auditkey-notifier.sh
+```
+
+Run in a terminal or as a background process. The script blocks on the `nc -U` connection to the auditd socket.
+
+## How it works
+
+The script connects to the auditd dispatcher socket and reads events line by line:
+
+```sh
+nc -U "$SOCKET_PATH" | while read -r line; do
+    case "$line" in
+        *"$ALERT_KEY1"*)
+            PID=$(echo  "$line" | grep -oP '\bpid=\K\d+')
+            COMM=$(echo "$line" | grep -oP '\bcomm="\K[^"]+' )
+            PPID=$(echo "$line" | grep -oP 'ppid=\K\d+')
+            UID=$(echo  "$line" | grep -oP '\buid=\K\d+')
+            curl -H "Content-Type: application/json" \
+              -d '{"embeds":[{"title":"'$ALERT_KEY1'","fields":[{"name":"COMM","value":"'$COMM'"},{"name":"PID","value":"'$PID'"},{"name":"PPID","value":"'$PPID'"},{"name":"UID","value":"'$UID'"}]}]}' \
+              "$webhook"
+            ;;
+    esac
+done
+```
+
+`case` matching is used instead of `grep` to avoid creating new audit events while the script is running — `grep` invocations can themselves be logged by auditd, causing a feedback loop.
+
+## Discord embed structure
+
+Each alert sends a JSON payload with one embed:
+
+```json
+{
+  "embeds": [{
+    "title": "recon",
+    "fields": [
+      { "name": "COMM",  "value": "nmap" },
+      { "name": "PID",   "value": "1337" },
+      { "name": "PPID",  "value": "1200" },
+      { "name": "UID",   "value": "1001" }
+    ]
+  }]
+}
+```
+
+The embed title is the audit key that triggered the alert. Fields show the command name, process ID, parent process ID, and user ID.
+
+## Auditd rules
+
+The script watches for events tagged with the keys defined in `ALERT_KEY1` and `ALERT_KEY2`. Your auditd rules must use matching `-k` values. `activate.sh` copies `auditd-rules` to `/etc/audit/rules.d/standard.rules`. Example rules:
+
+```
+-a always,exit -F arch=b64 -S execve -k recon
+-w /etc/passwd -p wa -k susp_activity
+```
+
+After changing rules, reload with `augenrules --load` or restart auditd.
+
+## Known bug
+
+<Warning>
+There is a typo on line 39 of the script. The second `curl` call (for `ALERT_KEY2 = susp_activity`) uses `$webook` instead of `$webhook`:
+
+```sh
+# Line 39 — BUGGY: $webook is undefined
+curl -H "Content-Type: application/json" -d '{...}' "$webook"
+
+# Should be:
+curl -H "Content-Type: application/json" -d '{...}' "$webhook"
+```
+
+Alerts for the `susp_activity` key will be silently dropped. Fix the typo before deploying.
+</Warning>

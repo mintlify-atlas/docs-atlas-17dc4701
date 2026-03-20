@@ -1,0 +1,99 @@
+---
+title: 'busybox-deploy.sh'
+description: "Deploys a static BusyBox binary to provide trusted POSIX tools independent of the system's potentially compromised utilities"
+---
+
+At the start of a competition, system binaries may already be compromised — trojaned versions of `ls`, `ps`, `netstat`, or `find` can hide attacker activity. Deploying a statically linked BusyBox binary gives your team a trusted, independent set of POSIX utilities that do not depend on any system libraries.
+
+<Note>
+BusyBox deployment is built into `activate.sh` (lines 51–60). The standalone `busybox-deploy.sh` compiles BusyBox from source as an alternative to the prebuilt binary approach.
+</Note>
+
+## Two approaches
+
+<CardGroup cols={2}>
+  <Card title="activate.sh (recommended)" icon="bolt">
+    Downloads a prebuilt static BusyBox 1.35.0 binary from busybox.net. Fast — completes in seconds. No build tools required.
+  </Card>
+  <Card title="busybox-deploy.sh" icon="wrench">
+    Compiles BusyBox 1.37.0 from source using `make`. Takes several minutes. Requires `bzip2` and `make`. Runs in the background.
+  </Card>
+</CardGroup>
+
+## Prebuilt deployment (activate.sh)
+
+This is the path taken when you run `activate.sh`. It downloads BusyBox 1.35.0 x86_64-linux-musl and installs it to `/opt/busybox/`:
+
+```sh
+# Download prebuilt static binary
+curl -k -L -O https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox
+chmod +x busybox
+
+# Install to /opt/busybox/
+mkdir /opt/busybox
+cp busybox /opt/busybox/
+
+# Create symlinks for all applets
+/opt/busybox/busybox --install -s /opt/busybox
+
+# Prepend to PATH for all future sessions
+printf 'export PATH=/opt/busybox:$PATH' >> /etc/profile
+export PATH=/opt/busybox:$PATH
+
+# Replace /bin/false with the BusyBox version
+cp /opt/busybox/false /bin/false
+```
+
+After running, `/opt/busybox` contains a symlink for every BusyBox applet (`sh`, `ls`, `ps`, `find`, `grep`, `awk`, `sed`, `nc`, and hundreds more), all pointing to the single static binary.
+
+<Warning>
+You must log out and back in after running `activate.sh` for the `/etc/profile` PATH change to take effect in your shell session. The script exports the path for the current session only — new SSH sessions will pick it up from `/etc/profile`.
+</Warning>
+
+## Source compilation (busybox-deploy.sh)
+
+The standalone script compiles BusyBox 1.37.0 from source in the background:
+
+```sh
+#!/bin/sh
+
+# Compile BusyBox from source in the background
+if [ ! -d ~/busybox-1.37.0/ ]; then
+   cd ~/
+   apt -y install bzip2 make
+   wget https://web.archive.org/web/20250808173717/https://busybox.net/downloads/busybox-1.37.0.tar.bz2 \
+     && tar -xvf busybox-1.37.0.tar.bz2 \
+     && cd busybox-1.37.0/ \
+     && make defconfig &>/dev/null \
+     && make &>/dev/null &
+fi
+touch /tmp/done.txt
+```
+
+The `make` command runs in the background (`&`). Poll for completion by watching for the build output or checking if `~/busybox-1.37.0/busybox` exists.
+
+<Note>
+This script uses `apt` to install build dependencies — it is written for Debian/Ubuntu systems. It does not install the resulting binary or update PATH. After the build finishes, manually copy the binary and run `--install -s` as shown in the prebuilt approach above.
+</Note>
+
+## Verifying the installation
+
+After deployment via `activate.sh`:
+
+```sh
+# Confirm the binary is in place
+ls /opt/busybox/busybox
+
+# Check the PATH is active
+which sh
+# Should output: /opt/busybox/sh
+
+# List all installed applets
+/opt/busybox/busybox --list
+```
+
+## Why this matters
+
+A compromised `ps` can hide attacker processes. A compromised `netstat` or `ss` can hide listening ports. By placing `/opt/busybox` at the front of `PATH`, your commands resolve to the trusted static binary first, bypassing any trojaned system tools.
+
+The `curl -k` flag in `activate.sh` skips TLS certificate verification. If you have concerns about the integrity of the download, verify the binary hash against a known-good source before installing.

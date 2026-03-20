@@ -1,0 +1,86 @@
+---
+title: "Introduction"
+description: "CyberScripts — blue team automation for cybersecurity competitions"
+---
+
+# CyberScripts
+
+CyberScripts is a collection of battle-tested shell scripts built for blue team competitors in cybersecurity competitions like CCDC and NCAE. The suite covers every phase of competition play: initial hardening, parallel deployment to multiple hosts, file integrity monitoring, C2 detection, and system baselining.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get your first host hardened in under 5 minutes
+  </Card>
+  <Card title="Deployment" icon="server" href="/deployment/overview">
+    Deploy to multiple hosts in parallel with minzero
+  </Card>
+  <Card title="Scripts Reference" icon="terminal" href="/scripts/watchdawg">
+    Full reference for every script and its arguments
+  </Card>
+  <Card title="Baselining" icon="chart-bar" href="/baselining/overview">
+    Capture and compare system state to detect compromise
+  </Card>
+</CardGroup>
+
+## What's included
+
+<CardGroup cols={2}>
+  <Card title="Watchdawg" icon="dog" href="/scripts/watchdawg">
+    File integrity monitor that detects and logs changes to watched files and directories
+  </Card>
+  <Card title="C2 Scanner" icon="magnifying-glass" href="/scripts/c2scanner">
+    Continuously monitors network connections and diffs socket state every 500ms
+  </Card>
+  <Card title="Angry C2 Scanner" icon="skull" href="/scripts/angryc2scanner">
+    Like c2scanner — but kills any process caught opening a new outbound connection
+  </Card>
+  <Card title="Backup" icon="floppy-disk" href="/scripts/backup">
+    Snapshots filesystem, services, packages, and firewall state at competition start
+  </Card>
+  <Card title="Autofirewall" icon="shield" href="/hardening/autofirewall">
+    Locks down iptables to only the ports your service needs — inbound and outbound
+  </Card>
+  <Card title="Harden" icon="lock" href="/hardening/harden">
+    Sets all shells to /bin/false, adds a bluey admin user, and locks accounts
+  </Card>
+  <Card title="Standard Baseline" icon="list-check" href="/baselining/standard">
+    Interactive walkthrough of 20+ security checks on a live system
+  </Card>
+  <Card title="Auditd Notifier" icon="bell" href="/scripts/auditkey-notifier">
+    Streams auditd events to Discord via webhook when audit keys are triggered
+  </Card>
+</CardGroup>
+
+## How it works
+
+The scripts are organized around the competition timeline:
+
+<Steps>
+  <Step title="Pre-competition">
+    Set up your hostfile with IP addresses, system names, and pre-generated password hashes. Run `backup.sh` locally to save a clean baseline.
+  </Step>
+  <Step title="Competition start (first 15 minutes)">
+    Run `minzero/deploy.sh` to push hardening scripts to all hosts in parallel. This sets firewalls, locks user accounts, and deploys your admin user across the entire range simultaneously.
+  </Step>
+  <Step title="Activation">
+    SSH into each host and run `activate.sh` to deploy auditd rules, start Watchdawg, install BusyBox, and harden the SSH config.
+  </Step>
+  <Step title="Ongoing monitoring">
+    Run `c2scanner.sh` or `angryc2scanner.sh` to watch for new outbound connections. Use `baseline/standard.sh` for an interactive security audit at any point during the competition.
+  </Step>
+</Steps>
+
+## Requirements
+
+| Dependency | Used by | Install |
+|---|---|---|
+| `sshpass` | `minzero/deploy.sh` | `apt install sshpass` |
+| `parallel` | `minzero/deploy.sh` | `apt install parallel` |
+| `auditd` | `activate.sh`, `auditkey-notifier.sh` | auto-installed by `activate.sh` |
+| `iptables` | `minzero/autofirewall.sh` | pre-installed on most distros |
+| `nc` (netcat) | `auditkey-notifier.sh` | `apt install netcat` |
+| `curl` | `activate.sh`, `auditkey-notifier.sh` | pre-installed on most distros |
+
+<Note>
+All scripts are written in POSIX `sh` (with `bash` used only where noted) and are tested on Alpine, Debian/Ubuntu, and RHEL/CentOS. The `funcs/detectOS.sh` helper auto-detects the package manager at runtime.
+</Note>

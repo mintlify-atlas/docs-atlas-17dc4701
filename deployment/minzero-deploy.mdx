@@ -1,0 +1,233 @@
+---
+title: "minzero/deploy.sh"
+description: "Parallel deployment script that hardens all competition hosts simultaneously"
+---
+
+`deploy.sh` is the primary deployment driver. Run it once from your control machine at the start of a competition to push firewall rules, user hardening, and the activation bundle to every host in parallel.
+
+## Usage
+
+```bash
+bash minzero/deploy.sh <username> <password>
+```
+
+| Argument | Description |
+|---|---|
+| `<username>` | Current SSH username on all target hosts |
+| `<password>` | Current SSH password for that user |
+
+**Example** — all hosts currently have `root` / `toor`:
+
+```bash
+bash minzero/deploy.sh root toor
+```
+
+<Warning>
+The password is passed as a plaintext command-line argument and stored in the `$OLDPASS` shell variable for the duration of the run. Only run `deploy.sh` on a machine you fully control, not a shared jumpbox or bastion host.
+</Warning>
+
+## Prerequisites
+
+Install both dependencies on your **control machine** before running:
+
+| Dependency | Purpose | Install |
+|---|---|---|
+| `sshpass` | Non-interactive SSH/SCP password authentication | `apt install sshpass` |
+| `parallel` | Run `deploy_host()` concurrently across hosts | `apt install parallel` |
+
+The target hosts need no additional setup — the scripts handle everything remotely.
+
+## Before you run
+
+You need two things in place before calling `deploy.sh`:
+
+**1. The hostfile** — at `minzero/hostfile`, one line per host:
+
+```
+<ip> <system-name> <password-hash>
+```
+
+Example:
+
+```
+192.168.1.10 webserver $6$a3f8c2d1e4b7f9a0$Kx2LvExampleHashAbcDef1234567890abcdef
+192.168.1.20 database $6$a3f8c2d1e4b7f9a0$Kx2LvExampleHashAbcDef1234567890abcdef
+192.168.1.30 dns $6$b9e1d4f2c7a8b3e5$Pq7MwExampleHashXyzUvw0987654321fedcba
+```
+
+Generate password hashes with `bash funcs/passwordHasher.sh '<password>'`.
+
+**2. The `systems/` directory** — one subdirectory per host, named to match the `<system-name>` in the hostfile, each containing a `port-sources` file:
+
+```
+systems/
+├── webserver/
+│   └── port-sources
+├── database/
+│   └── port-sources
+└── dns/
+    └── port-sources
+```
+
+The `port-sources` file has two lines — inbound ports on line 1, outbound ports on line 2:
+
+```
+80 443 22
+53 80 443
+```
+
+## What deploy.sh does
+
+<Steps>
+
+<Step title="Create the pass helper">
+
+`deploy.sh` writes a small shell script called `pass` that prints your password to stdout:
+
+```bash
+printf '#!/bin/sh\nprintf "$OLDPASS\n"' > pass
+chmod +x pass
+```
+
+This script is later used as `SUDO_ASKPASS` on the remote hosts, allowing `sudo -A` to authenticate non-interactively without embedding the password directly in the `sudo` command line.
+
+</Step>
+
+<Step title="Compress scripts into minzero.tar.gz">
+
+All scripts that `activate.sh` will need are bundled into a single tarball:
+
+```bash
+tar -cvf ../minzero.tar.gz \
+  ../c2scanner.sh \
+  ../sshd_config \
+  ../backup.sh \
+  ../watchdawg.sh \
+  ../watchdawg-sources \
+  ../auditd-rules
+```
+
+This tarball is uploaded to `/tmp/` on each host and extracted later by `activate.sh`.
+
+</Step>
+
+<Step title="Deploy to each host in parallel">
+
+GNU `parallel` runs `deploy_host()` for every line in the hostfile, up to 10 hosts concurrently:
+
+```bash
+parallel -j 10 --line-buffer deploy_host :::: hostfile
+```
+
+For each host, `deploy_host()` extracts the IP, system name, and password hash from the hostfile line:
+
+```bash
+deploy_host() {
+  line="$1"
+  IP=$(echo "$line" | cut -d' ' -f1)
+  DIR=$(echo "$line" | cut -d' ' -f2)
+  HASH=$(echo "$line" | cut -d' ' -f3)
+  ...
+}
+```
+
+</Step>
+
+<Step title="SCP files to the host">
+
+`sshpass` authenticates with the current password and copies all required files to `/tmp/` on the remote host in a single `scp` call:
+
+```bash
+sshpass -p "$OLDPASS" scp \
+  -o StrictHostKeyChecking=no \
+  harden.sh \
+  pass \
+  autofirewall.sh \
+  $(realpath ../activate.sh) \
+  $(realpath ../minzero.tar.gz) \
+  "$AbsPath/$DIR/port-sources" \
+  "$USER@$IP:/tmp/"
+```
+
+<Note>
+`StrictHostKeyChecking=no` is intentional for competition environments where host keys are unknown in advance. Do not use this flag in production.
+</Note>
+
+</Step>
+
+<Step title="Run autofirewall.sh">
+
+With the files in place, `deploy.sh` runs `autofirewall.sh` on the remote host using `sudo -A` (which uses the `pass` helper as `SUDO_ASKPASS`):
+
+```bash
+sshpass -p "$OLDPASS" ssh "$USER"@"$IP" \
+  'SUDO_ASKPASS="/tmp/pass" sudo -A /tmp/autofirewall.sh' < /dev/null \
+  2>&1 | sed "s/^/[$DIR] /"
+```
+
+`autofirewall.sh` flushes existing iptables rules, opens only the ports listed in `port-sources`, applies default-deny policies on INPUT, OUTPUT, and FORWARD, disables IPv6, and saves the ruleset for reboot persistence.
+
+</Step>
+
+<Step title="Run harden.sh with the password hash">
+
+Finally, `harden.sh` runs with the pre-hashed `bluey` password passed as an argument:
+
+```bash
+sshpass -p "$OLDPASS" ssh "$USER"@"$IP" \
+  "SUDO_ASKPASS=/tmp/pass sudo -A /tmp/harden.sh '$HASH'" < /dev/null \
+  2>&1 | sed "s/^/[$DIR] /"
+```
+
+`harden.sh` does the following:
+- Backs up `/etc/passwd` and `/etc/shadow` to `/etc/.passwd` and `/etc/.shadow`
+- Sets every user's shell to `/bin/false` via `sed`
+- Creates the `bluey` admin user and adds it to `wheel` or `sudo`
+- Sets the `bluey` password using the provided SHA-512 hash
+- Locks all system accounts (UID < 1000) except `nobody` and `bluey`
+- Immutably locks `/etc/passwd` and `/etc/shadow` with `chattr +i`
+- Shreds `/tmp/pass` to remove the sudo password helper
+
+</Step>
+
+</Steps>
+
+## Output and logging
+
+All output — including per-host progress lines and remote command output — is streamed to stdout with a `[system-name]` prefix and simultaneously appended to `deploy.log`:
+
+```bash
+} 2>&1 | tee -a "$LOGFILE"
+```
+
+Example output:
+
+```
+=== Compressing scripts ===
+[webserver] Begin system 192.168.1.10 with user root
+[database]  Begin system 192.168.1.20 with user root
+[webserver] starting autofirewall.sh
+[database]  starting autofirewall.sh
+[webserver] [*] Applying hardened firewall rules...
+[database]  [*] Applying hardened firewall rules...
+[webserver] done autofirewall.sh
+[webserver] starting harden.sh
+[webserver] Backing up passwd and shadow [DONE]
+[webserver] Added bluey
+[webserver] done harden.sh
+[webserver] All done
+Finished
+```
+
+If any host fails, its prefixed output lines will show the error. Check `deploy.log` after the run to confirm all hosts reached `All done`.
+
+## After deploy.sh
+
+Once `deploy.sh` finishes, SSH into each host as `bluey` and run `activate.sh` to complete the setup:
+
+```bash
+ssh bluey@<ip>
+sudo /tmp/activate.sh
+```
+
+See [activate.sh](/deployment/activate) for the full activation sequence.

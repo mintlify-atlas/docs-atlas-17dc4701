@@ -1,0 +1,152 @@
+---
+title: 'minzero/harden.sh'
+description: 'Locks down user accounts, sets all shells to /bin/false, and creates the bluey admin user'
+---
+
+`harden.sh` is the primary account-hardening script in the minzero suite. It locks every existing user out of the system, creates a clean `bluey` admin account, applies strict permissions to credential files, and makes those files immutable so adversaries cannot tamper with them.
+
+<Info>
+  **Version:** 0.0.1
+
+  The password hash passed to this script must be pre-generated with `funcs/passwordHasher.sh` **before** running `deploy.sh`. Do not run this script with a plaintext password.
+</Info>
+
+## Usage
+
+```bash
+sudo /tmp/harden.sh '<password-hash>'
+```
+
+| Argument | Description |
+| --- | --- |
+| `<password-hash>` | A pre-generated shadow-compatible hash applied to both the `bluey` and `root` accounts. Generate it with `funcs/passwordHasher.sh`. |
+
+<Warning>
+  After this script runs, **only `bluey` can log in**. Every other account has its shell set to `/bin/false` and is locked in `/etc/shadow`. Verify your `bluey` credentials before running.
+</Warning>
+
+## What it does
+
+<Steps>
+  <Step title="Back up credential files">
+    Copies `/etc/passwd` and `/etc/shadow` to `/etc/.passwd` and `/etc/.shadow`, then removes any existing immutable flags so the files can be edited.
+
+    ```bash
+    cp /etc/passwd /etc/.passwd
+    cp /etc/shadow /etc/.shadow
+    chattr -i /etc/passwd
+    chattr -i /etc/shadow
+    ```
+  </Step>
+
+  <Step title="Set all shells to /bin/false">
+    A single `sed` command rewrites every user's login shell in `/etc/passwd` to `/bin/false`, preventing interactive login for every account on the system — including any attacker-created users.
+
+    ```bash
+    sed -ri 's@(:[^:]*$)@:/bin/false@' /etc/passwd
+    ```
+
+    This regex matches the last colon-delimited field on each line (the shell field) and replaces it with `:/bin/false`.
+  </Step>
+
+  <Step title="Create the bluey admin user">
+    Creates the `bluey` account with `/bin/sh` as its shell. The correct command is chosen based on whether `apk` is available (Alpine Linux) or not.
+
+    ```bash
+    # Alpine
+    adduser bluey -h /home/bluey -s /bin/sh
+
+    # All other distros
+    useradd bluey -m -s /bin/sh
+    ```
+
+    The home directory is then cleaned out to remove any default files or dot-files:
+
+    ```bash
+    rm -rf /home/bluey/*
+    rm -rf /home/bluey/.*
+    ```
+  </Step>
+
+  <Step title="Add bluey to the sudoers group">
+    Grants `bluey` full sudo privileges. If the `wheel` group exists the script adds `bluey` there and, on Alpine, writes the sudoers rule explicitly. Otherwise it falls back to the `sudo` group.
+
+    ```bash
+    # wheel group path (Alpine)
+    usermod -aG wheel bluey
+    addgroup bluey wheel
+    echo '%wheel ALL=(ALL) ALL' > /etc/sudoers.d/wheel
+    chmod 0440 /etc/sudoers.d/wheel
+
+    # sudo group path
+    usermod -aG sudo bluey
+    ```
+  </Step>
+
+  <Step title="Set the hashed password">
+    Injects the pre-generated hash into `/etc/shadow` for `bluey`, then tightens file permissions.
+
+    ```bash
+    sed -i "s|^bluey:[^:]*|bluey:$hashed|" /etc/shadow
+    chmod 644 /etc/passwd
+    chmod 600 /etc/shadow
+    ```
+  </Step>
+
+  <Step title="Lock all system accounts">
+    Iterates over every account with UID < 1000 in `/etc/passwd`. Any account **not** in the allowed list has its `/etc/shadow` entry prefixed with `!`, which disables password-based authentication for that account.
+
+    ```bash
+    ALLOWED_USERS="nobody bluey"
+    ```
+
+    ```bash
+    awk -F: '$3 < 1000 {print $1}' /etc/passwd | while read user; do
+        sed -i "s/^\($user:\)\([^!]\)/\1!\2/" /etc/shadow
+    done
+    ```
+
+    Only `nobody` and `bluey` are left unlocked.
+  </Step>
+
+  <Step title="Make credential files immutable">
+    Sets the immutable flag on both files using `chattr`. After this point, even root cannot modify `/etc/passwd` or `/etc/shadow` without first removing the flag.
+
+    ```bash
+    chattr +i /etc/passwd
+    chattr +i /etc/shadow
+    ```
+  </Step>
+
+  <Step title="Shred the password helper script">
+    Securely deletes `/tmp/pass` (the password helper script) so the hash source material does not remain on disk.
+
+    ```bash
+    shred /tmp/pass
+    ```
+  </Step>
+</Steps>
+
+## Allowed users
+
+```bash
+ALLOWED_USERS="nobody bluey"
+```
+
+All other accounts with UID < 1000 are locked via the `!` prefix in `/etc/shadow`. Accounts with UID >= 1000 retain their shadow entries but cannot log in because their shell is `/bin/false`.
+
+<Tip>
+  To verify the state of shadow entries after hardening, run:
+
+  ```bash
+  chattr -i /etc/shadow && grep -E '^(nobody|bluey):' /etc/shadow && chattr +i /etc/shadow
+  ```
+
+  Locked entries will have a `!` immediately after the first colon.
+</Tip>
+
+## Prerequisites
+
+- Must be run as root (`sudo`)
+- `/tmp/pass` and the password hash must be staged by `deploy.sh` before invocation
+- `funcs/passwordHasher.sh` must be run first to produce the hash passed as `$1`

@@ -1,0 +1,201 @@
+---
+title: 'minzero/autofirewall.sh'
+description: 'Configures iptables to allow only the ports your service needs, denying everything else'
+---
+
+`autofirewall.sh` reads a plain-text `port-sources` file, builds an allowlist-only iptables ruleset around those ports, drops everything else, disables IPv6, and persists the rules across reboots. It is designed to be run once per host immediately after the competition starts.
+
+## Prerequisites
+
+- Must be run as root
+- `/tmp/port-sources` must exist and be populated **before** running the script
+
+## Usage
+
+```bash
+sudo /tmp/autofirewall.sh
+```
+
+<Warning>
+  If port `22` is not included in the inbound port list, you will lose SSH access to the host as soon as the default DROP policy is applied. Double-check your `port-sources` file before running.
+</Warning>
+
+## The port-sources file
+
+`/tmp/port-sources` is a two-line plain-text file:
+
+```text
+22 80 443
+22 80 443 53
+```
+
+| Line | Purpose | Example |
+| --- | --- | --- |
+| Line 1 | Space-separated **inbound** TCP ports to allow | `22 80 443` |
+| Line 2 | Space-separated **outbound** TCP ports to allow | `22 80 443 53` |
+
+<Note>
+  Port `53` on the outbound line is special: the script automatically adds **both** a UDP and a TCP rule for it so that DNS queries work correctly.
+</Note>
+
+## What it does
+
+<Steps>
+  <Step title="Install iptables on Alpine">
+    If `apk` is detected, installs iptables and registers it as an OpenRC service so rules survive reboots.
+
+    ```bash
+    apk add iptables
+    rc-update add iptables
+    rc-service iptables save
+    ```
+  </Step>
+
+  <Step title="Set default ACCEPT policies (safety precaution)">
+    Sets INPUT and OUTPUT to ACCEPT before flushing. This prevents existing connections from being dropped mid-flush.
+
+    ```bash
+    iptables -P INPUT ACCEPT
+    iptables -P OUTPUT ACCEPT
+    ```
+  </Step>
+
+  <Step title="Flush all existing rules">
+    Clears the filter table (INPUT, OUTPUT, FORWARD), user-defined chains, the nat table, and the mangle table.
+
+    ```bash
+    iptables -F
+    iptables -X
+    iptables -t nat -F
+    iptables -t mangle -F
+    ```
+  </Step>
+
+  <Step title="Allow loopback traffic">
+    Permits all traffic on the loopback interface in both directions so local services can communicate internally.
+
+    ```bash
+    iptables -A INPUT  -i lo -j ACCEPT
+    iptables -A OUTPUT -o lo -j ACCEPT
+    ```
+  </Step>
+
+  <Step title="Allow ESTABLISHED and RELATED traffic">
+    Enables stateful tracking so replies to outbound connections (and related flows such as FTP data channels) are permitted without explicit rules.
+
+    ```bash
+    iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    ```
+  </Step>
+
+  <Step title="Add inbound port rules">
+    Reads line 1 of `/tmp/port-sources` and creates one ACCEPT rule per port for new inbound TCP connections.
+
+    ```bash
+    IN=$(head -n1 /tmp/port-sources)
+
+    for port in $IN; do
+        iptables -A INPUT -p tcp --dport "$port" -m conntrack --ctstate NEW -j ACCEPT
+    done
+    ```
+  </Step>
+
+  <Step title="Drop outbound ICMP">
+    Prevents the host from sending ICMP packets outbound (ping, traceroute replies, etc.), reducing information leakage.
+
+    ```bash
+    iptables -A OUTPUT -p icmp -j DROP
+    ```
+  </Step>
+
+  <Step title="Add outbound port rules">
+    Reads line 2 of `/tmp/port-sources` and creates ACCEPT rules for new outbound TCP connections. Port 53 additionally receives a UDP rule for DNS.
+
+    ```bash
+    OUT=$(tail -n1 /tmp/port-sources)
+
+    for port in $OUT; do
+        if [ "$port" -eq 53 ]; then
+            iptables -A OUTPUT -p udp --dport "$port" -m conntrack --ctstate NEW -j ACCEPT
+        fi
+        iptables -A OUTPUT -p tcp --dport "$port" -m conntrack --ctstate NEW -j ACCEPT
+    done
+    ```
+  </Step>
+
+  <Step title="Allow inbound ICMP">
+    Permits inbound ICMP (ping) so competition infrastructure can still reach the host for health checks.
+
+    ```bash
+    iptables -A INPUT -p icmp -j ACCEPT
+    ```
+  </Step>
+
+  <Step title="Add rate-limited logging">
+    Appends LOG rules before the default DROP so dropped packets are recorded in syslog at a rate of no more than 5 per minute, preventing log flooding.
+
+    ```bash
+    iptables -A INPUT  -m limit --limit 5/min -j LOG --log-prefix "DROP_INPUT "
+    iptables -A OUTPUT -m limit --limit 5/min -j LOG --log-prefix "DROP_OUTPUT "
+    ```
+  </Step>
+
+  <Step title="Set default DROP policies">
+    Applies the default-deny stance. Any packet that did not match an earlier ACCEPT rule is silently dropped.
+
+    ```bash
+    iptables -P INPUT DROP
+    iptables -P OUTPUT DROP
+    iptables -P FORWARD DROP
+    ```
+  </Step>
+
+  <Step title="Drop INVALID conntrack state">
+    Explicitly drops packets in the INVALID conntrack state (malformed, out-of-window, etc.) on both INPUT and OUTPUT.
+
+    ```bash
+    iptables -A INPUT  -m conntrack --ctstate INVALID -j DROP
+    iptables -A OUTPUT -m conntrack --ctstate INVALID -j DROP
+    ```
+  </Step>
+
+  <Step title="Disable IPv6">
+    Disables IPv6 at the kernel level via sysctl and sets all ip6tables chains to DROP, eliminating an entire attack surface.
+
+    ```bash
+    sysctl -w net.ipv6.conf.all.disable_ipv6=1
+    sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+    ip6tables -P INPUT DROP
+    ip6tables -P OUTPUT DROP
+    ip6tables -P FORWARD DROP
+    ```
+  </Step>
+
+  <Step title="Save rules">
+    Persists the IPv4 and IPv6 rulesets to disk so they are restored automatically on reboot.
+
+    ```bash
+    mkdir -p /etc/iptables
+    iptables-save  -f /etc/iptables/iptables.rules
+    ip6tables-save -f /etc/iptables/ip6tables.rules
+    ```
+  </Step>
+</Steps>
+
+## Viewing dropped packets
+
+Dropped packets are logged to `/var/log/syslog` (or `/var/log/messages` on some distributions) with the `DROP_INPUT` or `DROP_OUTPUT` prefix.
+
+```bash
+# View all dropped outbound packets
+cat /var/log/syslog | grep "DROP_OUTPUT"
+
+# View all dropped inbound packets
+cat /var/log/syslog | grep "DROP_INPUT"
+```
+
+<Tip>
+  Monitoring `DROP_OUTPUT` is especially useful during a competition. Unexpected outbound connection attempts from your own host can indicate a compromised process trying to phone home.
+</Tip>

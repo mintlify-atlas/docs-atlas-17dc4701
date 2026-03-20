@@ -1,0 +1,83 @@
+---
+title: 'baseline/specific.sh'
+description: 'Diff-based comparison between a clean baseline and the current system state'
+---
+
+`baseline/specific.sh` compares a known-clean baseline archive against the current state of a (potentially compromised) system. It runs `data-collection.sh` on the live system, then walks you through side-by-side diffs for each captured data point.
+
+Version: `0.1.0`
+
+## Usage
+
+```sh
+sudo ./baseline/specific.sh <system-name>
+```
+
+### Arguments
+
+| Argument | Description |
+|---|---|
+| `<system-name>` | The name of the system. Must match the directory under `systems/` and the corresponding entry in the hostfile. |
+
+## Prerequisites
+
+Before running this script, you need a clean baseline archive at:
+
+```
+../<system-name>/baseline.tar.gz
+```
+
+<Warning>
+The clean baseline must be collected **before the competition begins** — from a known-good image or before attackers have had access. A baseline collected after attacker activity will not accurately reflect the original system state.
+</Warning>
+
+The script also requires `data-collection.sh` to be present in the same directory, as it calls it directly.
+
+## How it works
+
+<Steps>
+  <Step title="Collect current system state">
+    The script runs `data-collection.sh` on the live system to capture a snapshot of the current (potentially dirty) state. Output is written to `/tmp/bk/` and archived to `/tmp/baseline.tar.gz`.
+
+    ```sh
+    ./data-collection.sh
+    ```
+  </Step>
+
+  <Step title="Decompress both archives">
+    The clean baseline archive is extracted to `../<system-name>-clean`. The freshly collected archive is extracted to `../<system-name>-dirty`.
+
+    ```sh
+    tar -xpzf ../<system-name>/baseline.tar.gz ../<system-name>-clean
+    tar -xpzf /tmp/baseline.tar.gz             ../<system-name>-dirty
+    ```
+  </Step>
+
+  <Step title="Run interactive diff comparisons">
+    The script steps through each data point, displaying a side-by-side diff with the clean system on the left and the current system on the right. Press **Enter** to advance between comparisons.
+
+    All diffs use `diff -y` for side-by-side output.
+  </Step>
+</Steps>
+
+## Diff comparisons
+
+The script covers the following comparisons in order:
+
+| Comparison | Files diffed |
+|---|---|
+| Kernel modules | `kernelModules` |
+| Active (running) services | `servicesActiveRunning` |
+| Startup (enabled) services | `servicesEnabledAutostart` |
+| Installed packages | `packages` |
+| SUID bit files | `suidbits` |
+| Open ports | `openPorts` |
+| Environment variables | `environmentalVariables` |
+| PAM configuration | `filesystem/etc/pam.d/` (recursive) |
+| Full `/etc/` directory | `filesystem/etc/` (recursive) |
+
+The PAM and `/etc/` comparisons use `diff -ry` for recursive directory comparison.
+
+<Note>
+After the PAM diff, the script pauses and recommends securing your scored and network-exposed services before continuing to the full `/etc/` diff. The full `/etc/` comparison can produce a large amount of output.
+</Note>

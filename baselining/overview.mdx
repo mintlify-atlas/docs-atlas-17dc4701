@@ -1,0 +1,56 @@
+---
+title: 'Baselining overview'
+description: 'Capture, compare, and audit system state during a competition'
+---
+
+Baselining means capturing the state of a system at a known-good point so you can detect changes caused by attackers. In a blue team competition, attackers have often already modified a system before you get access. Baselining gives you the tools to identify those modifications quickly and methodically.
+
+CyberScripts provides three scripts for baselining, covering two distinct phases.
+
+## Two phases
+
+### Phase 1: initial capture
+
+Run `backup.sh` as early as possible at competition start — ideally before any attacker activity, or immediately when you get system access. It captures:
+
+- Key filesystem paths (`/etc/`, `/home/`, `/var/www/`, `/var/log/`, `/var/spool/`)
+- Running processes and service state
+- Installed packages
+- Listening ports and firewall rules
+- Loaded kernel modules
+
+Output is written to `/var/bk/` and archived to `~/bk.tar.gz`. This archive is your ground truth for the competition. Store it somewhere safe and copy it off the system if you can.
+
+<Note>
+`backup.sh` runs automatically as the first step in `activate.sh`. If you are using the full activation workflow, you do not need to run it manually.
+</Note>
+
+### Phase 2: ongoing audit
+
+Once the competition is underway, use the baselining scripts to audit the current state of each system and compare it against your clean snapshot.
+
+- **`baseline/standard.sh`** — an interactive walkthrough of 20+ security checks on a live system. No pre-collected baseline archive is required. Use this for a fast, thorough audit on any system.
+- **`baseline/specific.sh`** — a diff-based comparison between a clean baseline archive and the current system state. Requires a `baseline.tar.gz` collected before the competition (or from a known-clean image). Use this to identify exactly what changed.
+
+## The three scripts
+
+| Script | When to use | Requires baseline archive? |
+|---|---|---|
+| `backup.sh` | Competition start — initial snapshot | No |
+| `baseline/data-collection.sh` | Lightweight snapshot on a (possibly compromised) host, called by `specific.sh` | No |
+| `baseline/standard.sh` | Interactive security walkthrough on a live system | No |
+| `baseline/specific.sh <system-name>` | Diff comparison against a known-clean baseline | Yes |
+
+`data-collection.sh` is used internally by `specific.sh`. It writes its output to `/tmp/bk/` rather than `/var/bk/`, making it safer to run on a host that may already be compromised.
+
+<CardGroup cols={3}>
+  <Card title="standard.sh" icon="list-checks" href="/baselining/standard">
+    Interactive 20+ check security audit on a live system. No baseline archive needed.
+  </Card>
+  <Card title="specific.sh" icon="code-compare" href="/baselining/specific">
+    Side-by-side diff comparison between a clean baseline and the current system state.
+  </Card>
+  <Card title="data-collection.sh" icon="database" href="/baselining/data-collection">
+    Lightweight snapshot script that captures system state to /tmp/bk for use by specific.sh.
+  </Card>
+</CardGroup>

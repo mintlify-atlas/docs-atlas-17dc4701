@@ -1,0 +1,33 @@
+---
+title: 'Utility functions'
+description: 'Reusable shell functions used across the CyberScripts suite'
+---
+
+The `funcs/` directory contains small helper scripts that are either sourced by other scripts or run directly. They handle cross-cutting concerns — OS detection, notifications, privilege checks, and terminal formatting — so the main scripts stay focused on their tasks.
+
+<CardGroup cols={2}>
+  <Card title="detectOS.sh" icon="magnifying-glass" href="/funcs/detect-os">
+    Detects the Linux distribution by checking for package managers. Returns a short identifier like `rhel` or `debian`.
+  </Card>
+  <Card title="discordNotif.sh" icon="bell" href="/funcs/discord-notif">
+    Sends a Discord embed notification via webhook. Called by `auditkey-notifier.sh` when audit keys trigger.
+  </Card>
+  <Card title="passwordHasher.sh" icon="lock" href="/funcs/password-hasher">
+    Generates a SHA-512 password hash for use in `harden.sh` and the hostfile.
+  </Card>
+  <Card title="shellColors.sh" icon="palette" href="/funcs/shell-colors">
+    ANSI color constants for terminal output used across the suite.
+  </Card>
+</CardGroup>
+
+## All utility functions
+
+| File | Purpose | How it's used |
+|---|---|---|
+| `funcs/detectOS.sh` | Detects the Linux distribution by checking for `dnf`, `apt`, `zypper`, `apk`, or `pacman` | Sourced or run directly; output captured with `$(./funcs/detectOS.sh)` |
+| `funcs/discordNotif.sh` | Sends a Discord embed with process details (`COMM`, `PID`, `PPID`, `UID`) to a webhook | Sourced — variables must be set before sourcing |
+| `funcs/passwordHasher.sh` | Generates a SHA-512 (`$6$`) password hash from a command-line argument | Run directly: `./funcs/passwordHasher.sh <password>` |
+| `funcs/shellColors.sh` | Defines ANSI color variables (`RED`, `GREEN`, `YELLOW`, etc.) | Sourced by scripts that use colored terminal output |
+| `funcs/requireRoot.sh` | Exits with an error message if the script is not running as root | Sourced at the top of scripts that require root privileges |
+| `funcs/requestInteract.sh` | Defines an `interact()` function that pauses and waits for the user to press Enter | Sourced by interactive scripts between sections |
+| `funcs/isInDockerCheck.sh` | Checks whether the script is running inside a Docker container by reading `/proc/self/cgroup` | Sourced inline for container-aware behavior |

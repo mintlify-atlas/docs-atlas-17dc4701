@@ -1,0 +1,120 @@
+---
+title: 'watchdawg.sh'
+description: 'File integrity monitor that detects and logs unauthorized changes'
+---
+
+`watchdawg.sh` continuously monitors a list of files and directories for changes. When a modification is detected, it logs the diff and timestamp to an append-only log directory, then updates its reference copy. It runs as a background daemon launched by `activate.sh`.
+
+**Version:** 1.1.1
+
+## Usage
+
+```sh
+watchdawg.sh <backup-dir> <sources-file>
+```
+
+| Argument | Description |
+|---|---|
+| `backup-dir` | Directory where reference copies of watched files are stored |
+| `sources-file` | Text file listing files and directories to watch, one path per line |
+
+<Info>
+`activate.sh` deploys `watchdawg.sh` to `/etc/kernel/watchdawg` and launches it with `/etc/kerner/init-state` as the backup dir and `/etc/kernel/sources` as the sources file.
+</Info>
+
+## How it works
+
+<Steps>
+  <Step title="Setup">
+    Creates the backup directory and `/var/log/.wd/` log directory. Sets `chattr +a` on `/var/log/.wd/` so log files can only be appended to — not overwritten or deleted.
+
+    ```sh
+    mkdir -p "$BACKUP_DIR"
+    mkdir -p /var/log/.wd/
+    chattr +a /var/log/.wd/
+    ```
+  </Step>
+  <Step title="Build the watchlist">
+    Reads the sources file line by line. If an entry is a directory, all files inside it are appended back to the sources file for individual tracking. If an entry is a file, a reference copy is made with `cp -p --parents` to preserve the full path structure inside the backup directory.
+  </Step>
+  <Step title="Main watch loop">
+    Every 3 seconds, diffs each watched file against its reference copy. If `diff` exits with code `1` (files differ), the change is logged to `/var/log/.wd/wd.log` and the reference copy is updated.
+  </Step>
+</Steps>
+
+## Watch loop
+
+The core detection loop:
+
+```sh
+while true; do
+   while IFS= read -r line; do
+      [ -f "$line" ] || continue
+      diff -q "$line" "$BACKUP_DIR$line"
+      DIFF_EXIT_CODE=$?
+
+      if [ "$DIFF_EXIT_CODE" -eq 1 ]; then
+         echo "============" >> "$LOG_DIR/wd.log"
+         echo "Woof! File change detected on file $line"
+         echo "CHANGE on file $line at $(date)" >> "$LOG_DIR/wd.log"
+         diff "$line" "$BACKUP_DIR$line" >> "$LOG_DIR/wd.log"
+         cp -p "$line" "$BACKUP_DIR$line"
+      fi
+   done < "$INPUT"
+
+   sleep 3
+done
+```
+
+## Log format
+
+Entries written to `/var/log/.wd/wd.log` follow this format:
+
+```
+============
+CHANGE on file /etc/passwd at Mon Jan 1 00:00:00 UTC 2025
+< root:x:0:0:root:/root:/bin/bash
+> root:x:0:0:root:/root:/bin/sh
+```
+
+Each entry is separated by `============` and includes the full file path, timestamp, and diff output showing what changed.
+
+## The sources file
+
+The sources file is a plain text file with one path per line. Paths can be files or directories:
+
+```
+/etc/passwd
+/etc/shadow
+/etc/ssh/sshd_config
+/etc/cron.d
+/var/www/html
+```
+
+When a directory is listed, `watchdawg.sh` expands it to individual files on startup. New files added to a watched directory after startup are not automatically picked up.
+
+<Note>
+The sources file is modified at runtime — directory entries have their children appended to the file. Keep a separate clean copy if you need the original list.
+</Note>
+
+## Deployment path
+
+`activate.sh` installs watchdawg to a disguised location to reduce attacker visibility:
+
+```sh
+chmod 700 watchdawg.sh
+mkdir -p /etc/kernel
+mv /tmp/watchdawg.sh /etc/kernel/watchdawg
+mv /tmp/watchdawg-sources /etc/kernel/sources
+nohup /etc/kernel/watchdawg /etc/kerner/init-state /etc/kernel/sources > /etc/kernel/out 2>&1 &
+```
+
+Output is redirected to `/etc/kernel/out` and the process runs detached via `nohup`.
+
+## Version history
+
+| Version | Changes |
+|---|---|
+| v1.0.0 | Watch files and output changes to log |
+| v1.1.0 | Added support for watching directories |
+| v1.1.1 | Mark only `/var/log/.wd/` as append-only instead of all of `/var/log` |

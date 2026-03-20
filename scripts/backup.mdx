@@ -1,0 +1,125 @@
+---
+title: 'backup.sh'
+description: "Captures a snapshot of the system's initial competition state"
+---
+
+`backup.sh` takes a point-in-time snapshot of key filesystem paths, running processes, services, installed packages, listening ports, firewall rules, and kernel modules. Run this as early as possible at the start of a competition to establish a clean baseline.
+
+<Info>
+`backup.sh` is run automatically by `activate.sh` as its first step. You do not need to run it manually if you are using the full activation workflow.
+</Info>
+
+## Usage
+
+```sh
+sudo ./backup.sh
+```
+
+Must be run as root. The script will exit immediately if it detects it is not running as UID 0.
+
+## Backup location
+
+All output is written to `/var/bk/`. At the end of the script, the entire directory is archived to `~/bk.tar.gz`.
+
+## Output files
+
+### Filesystem copies
+
+The following directories are recursively copied to `/var/bk/filesystem/`:
+
+| Source | Destination |
+|---|---|
+| `/etc/` | `/var/bk/filesystem/etc/` |
+| `/home/` | `/var/bk/filesystem/home/` |
+| `/var/www/` | `/var/bk/filesystem/var/www/` |
+| `/var/log/` | `/var/bk/filesystem/var/log/` |
+| `/var/spool/` | `/var/bk/filesystem/var/spool/` |
+
+### Processes and services
+
+| File | Contents |
+|---|---|
+| `processes-ps_aux.txt` | Output of `ps aux` |
+| `processes-pstree.txt` | Output of `pstree -p` |
+| `services-active_running.txt` | Running services (`systemctl list-units` or `rc-status --started`) |
+| `services-enabled_autostart.txt` | Enabled/autostart services (`systemctl list-unit-files` or `rc-update -v show`) |
+| `services all_units.txt` | All service units (`systemctl list-units --all` or `rc-update show`) |
+
+The script detects whether the system uses systemd or OpenRC and runs the appropriate commands.
+
+### Packages
+
+| File | Contents | Distro |
+|---|---|---|
+| `packages-alpine.txt` | `apk info` | Alpine Linux |
+| `packages-debian.txt` | `dpkg -l` | Debian / Ubuntu |
+| `packages-rhel.txt` | `rpm -qa` | RHEL / Fedora / CentOS |
+
+Only one of these files will be created, depending on which package manager is detected.
+
+### Network and kernel
+
+| File | Contents |
+|---|---|
+| `listeningports.txt` | `ss -tulpn` — all listening TCP/UDP ports with process info |
+| `iptablerules.txt` | `iptables -L` — current firewall rules |
+| `kernelmodules.txt` | `lsmod` — currently loaded kernel modules |
+
+## Archive
+
+After all data is collected, the backup directory is compressed:
+
+```sh
+tar -cpzf ~/bk.tar.gz /var/bk
+```
+
+Store `~/bk.tar.gz` somewhere safe — copy it off the system if possible. It is your ground truth for the competition.
+
+## Full script
+
+```sh
+#!/bin/sh
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "[ERROR] This script must be run as root or with sudo."
+    exit 1
+fi
+
+BACKUP_DIR=/var/bk
+
+mkdir -p $BACKUP_DIR/filesystem/etc
+mkdir -p $BACKUP_DIR/filesystem/home
+mkdir -p $BACKUP_DIR/filesystem/var/www
+mkdir -p $BACKUP_DIR/filesystem/var/log
+mkdir -p $BACKUP_DIR/filesystem/var/spool
+
+cp -pr /etc/*       $BACKUP_DIR/filesystem/etc/
+cp -pr /home/*      $BACKUP_DIR/filesystem/home/
+cp -pr /var/www/*   $BACKUP_DIR/filesystem/var/www/
+cp -pr /var/log/*   $BACKUP_DIR/filesystem/var/log/
+cp -pr /var/spool/* $BACKUP_DIR/filesystem/var/spool/
+
+ps aux    > $BACKUP_DIR/processes-ps_aux.txt
+pstree -p > $BACKUP_DIR/processes-pstree.txt
+
+if [ -d /run/systemd/system ]; then
+    systemctl list-units      --type=service --state=running --no-pager > $BACKUP_DIR/services-active_running.txt
+    systemctl list-unit-files --type=service --state=enabled --no-pager > $BACKUP_DIR/services-enabled_autostart.txt
+    systemctl list-units                               --all --no-pager > $BACKUP_DIR/"services all_units.txt"
+else
+    rc-status --started --manual > $BACKUP_DIR/services-active_running.txt
+    rc-update -v show            > $BACKUP_DIR/services-enabled_autostart.txt
+    rc-update show               > $BACKUP_DIR/"services all_units.txt"
+fi
+
+if [ -x "$(command -v apk)" ];   then apk info  > $BACKUP_DIR/packages-alpine.txt
+elif [ -x "$(command -v apt)" ]; then dpkg -l   > $BACKUP_DIR/packages-debian.txt
+elif [ -x "$(command -v dnf)" ]; then rpm -qa   > $BACKUP_DIR/packages-rhel.txt
+fi
+
+ss -tulpn   > $BACKUP_DIR/listeningports.txt
+iptables -L > $BACKUP_DIR/iptablerules.txt
+lsmod       > $BACKUP_DIR/kernelmodules.txt
+
+tar -cpzf ~/bk.tar.gz $BACKUP_DIR
+```
